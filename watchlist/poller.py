@@ -17,6 +17,7 @@ Runs only while the stack is up, and dies with it like everything else here.
 """
 import os
 import pathlib
+import re
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -34,6 +35,7 @@ INTERVAL = int(os.environ.get("WATCHLIST_INTERVAL", "120"))
 
 STATE = os.environ.get("PS5PLEX_STATE", "/state/managed.json")
 
+CINEMETA = "https://v3-cinemeta.strem.io"
 DISCOVER = "https://discover.provider.plex.tv"
 RD = "https://api.real-debrid.com/rest/1.0"
 HEADERS = {"Accept": "application/xml", "X-Plex-Product": "ps5plex",
@@ -98,6 +100,67 @@ def rd_existing_names():
     return {t.get("filename", "").lower() for t in r.json()}
 
 
+def aired_seasons(imdb):
+    """Seasons of a series that have actually aired, from Stremio's metadata.
+
+    Season 0 is specials and is skipped.
+    """
+    r = requests.get(f"{CINEMETA}/meta/series/{imdb}.json", timeout=30)
+    r.raise_for_status()
+    today = time.strftime("%Y-%m-%d")
+    seasons = set()
+    for v in r.json().get("meta", {}).get("videos", []):
+        season = v.get("season")
+        if not season:
+            continue
+        released = (v.get("released") or v.get("firstAired") or "")[:10]
+        if released and released > today:
+            continue                      # not out yet
+        seasons.add(int(season))
+    return sorted(seasons)
+
+
+def best_series_release(imdb, season):
+    """Pick one torrent for a season.
+
+    We ask the scraper for episode 1. Comet resolves season packs down to the
+    individual episode file, but the hash it reports is the *torrent's* hash —
+    so adding it pulls in whatever that torrent holds, usually the whole season.
+    One request and one add per season instead of one per episode, which matters
+    when the debrid API is rate-limited.
+    """
+    url = f"{SCRAPER}/stream/series/{imdb}:{season}:1.json"
+    r = requests.get(url, timeout=90, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    best = None
+    for s in r.json().get("streams", []):
+        release, info_hash, size, cached = _stream_fields(s)
+        if not (release and info_hash):
+            continue
+        points = score(release, size)
+        if points is None:
+            continue
+        if cached:
+            points += 40
+        if best is None or points > best[0]:
+            best = (points, release, info_hash)
+    return best
+
+
+def _stream_fields(s):
+    """Comet 2.x hides the useful parts in behaviorHints."""
+    hints = s.get("behaviorHints") or {}
+    release = hints.get("filename") or ""
+    if not release:
+        release = (s.get("description") or "").split("\n")[0].lstrip("📄 ").strip()
+    info_hash = ""
+    for part in str(hints.get("bingeGroup", "")).split("|"):
+        if len(part) == 40 and all(c in "0123456789abcdefABCDEF" for c in part):
+            info_hash = part.lower()
+    badge = s.get("name") or ""
+    return release, info_hash, hints.get("videoSize") or 0, ("⚡" in badge or "[RD+]" in badge)
+
+
 def best_release(kind, imdb):
     """Ask the scraper what exists and pick the release the PS5 plays best."""
     url = f"{SCRAPER}/stream/{'series' if kind == 'show' else 'movie'}/{imdb}.json"
@@ -105,28 +168,14 @@ def best_release(kind, imdb):
     r.raise_for_status()
     best = None
     for s in r.json().get("streams", []):
-        hints = s.get("behaviorHints") or {}
-        # Comet puts the real release name and the info hash in behaviorHints;
-        # `name` is only a badge like "[RD⚡] Comet 2160p", which tells you
-        # nothing about codec or source.
-        release = hints.get("filename") or ""
-        if not release:
-            first = (s.get("description") or "").split("\n")[0]
-            release = first.lstrip("📄 ").strip()
-        # bingeGroup looks like "comet|realdebrid|<infohash>"
-        info_hash = ""
-        for part in str(hints.get("bingeGroup", "")).split("|"):
-            if len(part) == 40 and all(c in "0123456789abcdefABCDEF" for c in part):
-                info_hash = part.lower()
+        release, info_hash, size, cached = _stream_fields(s)
         if not (release and info_hash):
             continue
-        points = score(release, hints.get("videoSize") or 0)
+        points = score(release, size)
         if points is None:
             continue          # CAM/TS/screener — never selected
-        # Already cached at Real-Debrid means it plays immediately instead of
-        # waiting on a download.
-        if "⚡" in (s.get("name") or "") or "[RD+]" in (s.get("name") or ""):
-            points += 40
+        if cached:
+            points += 40      # already at Real-Debrid: plays immediately
         if best is None or points > best[0]:
             best = (points, release, info_hash)
     return best
@@ -161,39 +210,76 @@ def pass_once():
             print(f"[watchlist] {title}: no IMDb id, skipping")
             continue
 
-        if kind == "show":
-            # Series need per-episode scraping (Comet expects tt123:1:1), which
-            # is not written yet. Say so rather than failing quietly.
-            print(f"[watchlist] {title}: series are not supported yet, skipping")
-            continue
-
-        # It may already be in the account from before — adopt it rather than
-        # fetching a second copy.
         if torrents is None:
             torrents = rd_torrents()
-        already = next((t for t in torrents
-                        if title.lower() in (t.get("filename") or "").lower()), None)
-        if already:
-            managed[already["filename"]] = {"title": title, "imdb": imdb,
-                                            "kind": kind, "ratingKey": key}
-            save_managed(managed)
-            print(f"[watchlist] {title}: already in Real-Debrid, added to your library")
-            continue
 
-        found = best_release(kind, imdb)
-        if not found:
-            print(f"[watchlist] {title}: nothing usable found (all junk, or no results)")
-            continue
+        if kind == "show":
+            _fetch_series(title, imdb, key, managed, torrents)
+        else:
+            _fetch_movie(title, imdb, key, managed, torrents)
 
-        points, name, info_hash = found
-        tid = add_to_rd(info_hash)
-        info = requests.get(f"{RD}/torrents/info/{tid}",
-                            headers={"Authorization": f"Bearer {RD_TOKEN}"},
-                            timeout=30).json()
-        folder = info.get("filename") or name
-        managed[folder] = {"title": title, "imdb": imdb, "kind": kind, "ratingKey": key}
+
+def _adopt(title, imdb, key, managed, torrents, season=None):
+    """If it is already in the account, use that instead of fetching it twice."""
+    needle = title.lower()
+    for t in torrents:
+        name = (t.get("filename") or "").lower()
+        if needle not in name:
+            continue
+        if season is not None and not re.search(rf"s0?{season}\b", name):
+            continue
+        managed[t["filename"]] = {"title": title, "imdb": imdb, "kind": "show" if season
+                                  else "movie", "ratingKey": key, "season": season}
         save_managed(managed)
-        print(f"[watchlist] added {title} -> {name[:66]} (score {points:.0f})")
+        which = f"{title} season {season}" if season else title
+        print(f"[watchlist] {which}: already in Real-Debrid, added to your library")
+        return True
+    return False
+
+
+def _record(folder, title, imdb, key, kind, managed, season=None):
+    managed[folder] = {"title": title, "imdb": imdb, "kind": kind,
+                       "ratingKey": key, "season": season}
+    save_managed(managed)
+
+
+def _add_and_record(found, title, imdb, key, kind, managed, season=None):
+    points, name, info_hash = found
+    tid = add_to_rd(info_hash)
+    info = requests.get(f"{RD}/torrents/info/{tid}",
+                        headers={"Authorization": f"Bearer {RD_TOKEN}"}, timeout=30).json()
+    _record(info.get("filename") or name, title, imdb, key, kind, managed, season)
+    label = f"{title} S{season:02d}" if season else title
+    print(f"[watchlist] added {label} -> {name[:62]} (score {points:.0f})")
+
+
+def _fetch_movie(title, imdb, key, managed, torrents):
+    if _adopt(title, imdb, key, managed, torrents):
+        return
+    found = best_release("movie", imdb)
+    if not found:
+        print(f"[watchlist] {title}: nothing usable found (all junk, or no results)")
+        return
+    _add_and_record(found, title, imdb, key, "movie", managed)
+
+
+def _fetch_series(title, imdb, key, managed, torrents):
+    """One season pack per aired season, rather than one torrent per episode."""
+    seasons = aired_seasons(imdb)
+    if not seasons:
+        print(f"[watchlist] {title}: no aired seasons found")
+        return
+    for season in seasons:
+        if any(v.get("imdb") == imdb and v.get("season") == season
+               for v in managed.values()):
+            continue
+        if _adopt(title, imdb, key, managed, torrents, season):
+            continue
+        found = best_series_release(imdb, season)
+        if not found:
+            print(f"[watchlist] {title} S{season:02d}: nothing usable found")
+            continue
+        _add_and_record(found, title, imdb, key, "show", managed, season)
 
 
 def main():

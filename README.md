@@ -87,9 +87,14 @@ librarian uses, and send the winner to Real-Debrid. Camera rips are never
 selected, whatever their claimed resolution. If the title is already in your
 Real-Debrid account it is adopted rather than fetched again.
 
-Series are not supported yet — Comet wants per-episode ids (`tt123:1:1`) and that
-lookup is unwritten. The poller says so and skips them rather than failing
-silently.
+Series are fetched one season at a time. Stremio's metadata gives the seasons
+that have actually aired, then the scraper is asked for episode 1 of each. Comet
+resolves a season pack down to the individual episode file, but reports the
+*torrent's* hash — so adding it pulls in the whole season. One request and one
+add per season, not per episode.
+
+Release language is part of the ranking, not an afterthought: without it a
+Chinese-subbed rip of The Pitt outscored the English one on file size alone.
 
 ### Rate limits
 

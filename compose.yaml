@@ -77,9 +77,8 @@ services:
       dockerfile: watchlist/Dockerfile
     container_name: ps5plex-watchlist
     restart: "no"
-    depends_on:
-      zurg:
-        condition: service_healthy
+    # No depends_on zurg: this talks to Plex, the scraper and Real-Debrid only.
+    # Gating it on zurg meant a rate-limited zurg blocked the poller too.
     environment:
       PLEX_TOKEN: ${PLEX_TOKEN:-}
       RD_TOKEN: ${RD_TOKEN:-}

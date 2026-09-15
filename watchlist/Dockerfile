@@ -1,5 +1,5 @@
 FROM python:3-slim
-RUN pip install --no-cache-dir requests
+RUN pip install --no-cache-dir requests guessit
 WORKDIR /app
 # rank.py is shared with the librarian — one definition of "which release is
 # best for the PS5", used both when choosing what to fetch and what to link.

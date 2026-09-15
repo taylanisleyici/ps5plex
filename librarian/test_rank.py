@@ -28,7 +28,16 @@ def main():
     assert score("Movie.2024.720p.WEB-DL.x264.mkv") is not None
     assert score("Movie.2024.1080p.HDCAM.mkv") is None
 
-    print("ok — 7 assertions")
+    # a Chinese-subbed rip must not beat the plain English release
+    assert score("The.Pitt.S01E01.1080p.ENG.ITA.H264-TheBlackKing.mkv") > \
+           score("匹兹堡医护前线.2025.S01E01.HD1080P.AAC.H264.CHS-ENG.mkv")
+    # nor a Spanish-dubbed one
+    assert score("Movie.2024.1080p.BluRay.x264-GRP.mkv") > \
+           score("Movie.2024.1080p.BluRay.x264.Castellano.Latino.mkv")
+    # dual-audio including English is only mildly penalised, not excluded
+    assert score("Movie.2024.1080p.BluRay.x264.MULTi.ENG.mkv") is not None
+
+    print("ok — 10 assertions")
 
 
 if __name__ == "__main__":

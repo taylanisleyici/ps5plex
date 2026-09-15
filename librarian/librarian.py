@@ -26,7 +26,7 @@ from classify import VIDEO_EXTS, classify, _first
 from guessit import guessit
 from rank import score
 
-SOURCE = pathlib.Path(os.environ.get("LIBRARIAN_SOURCE", "/media/__all__"))
+SOURCE = pathlib.Path(os.environ.get("LIBRARIAN_SOURCE", "/media"))
 TARGET = pathlib.Path(os.environ.get("LIBRARIAN_TARGET", "/library"))
 OVERRIDES_FILE = pathlib.Path(os.environ.get("LIBRARIAN_OVERRIDES", "/etc/ps5plex/overrides.yml"))
 STATE = pathlib.Path(os.environ.get("PS5PLEX_STATE", "/state/managed.json"))

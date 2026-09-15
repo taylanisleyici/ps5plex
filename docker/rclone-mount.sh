@@ -1,5 +1,5 @@
 #!/usr/bin/with-contenv bash
-# Mounts zurg's WebDAV at /media before Plex starts.
+# Mounts rdserve's HTTP tree at /media before Plex starts.
 #
 # vfs-cache-mode is OFF on purpose. In `full` mode rclone downloads each file in
 # its ENTIRETY the first time anything reads a single byte of it — so merely
@@ -17,7 +17,7 @@ if mountpoint -q "$MOUNT"; then
   exit 0
 fi
 
-rclone mount zurg: "$MOUNT" \
+rclone mount rd: "$MOUNT" \
   --config /etc/rclone/rclone.conf \
   --allow-other \
   --uid "${PUID:-911}" --gid "${PGID:-911}" --umask 002 \

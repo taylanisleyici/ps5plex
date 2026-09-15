@@ -7,30 +7,23 @@
 # on its own or survive the terminal you started it in.
 
 services:
-  zurg:
-    image: ghcr.io/debridmediamanager/zurg-testing:latest
-    container_name: ps5plex-zurg
+  rdserve:
+    build:
+      context: .
+      dockerfile: rdserve/Dockerfile
+    container_name: ps5plex-rdserve
     restart: "no"
-    # zurg ignores the TOKEN environment variable whenever a config file is
-    # already present — env is only used to bootstrap a config on a fresh start.
-    # So the token is prepended to the committed template at boot, which keeps the
-    # secret in .env alone and the config file free of credentials.
-    entrypoint: ["sh", "-c", "printf 'token: %s\\n' \"$$TOKEN\" | cat - /app/config.template.yml > /app/config.yml && exec ./zurg"]
     environment:
-      TOKEN: ${RD_TOKEN:?RD_TOKEN is not set — copy .env.example to .env and fill it in}
-      LOG_LEVEL: INFO
+      RD_TOKEN: ${RD_TOKEN:?RD_TOKEN is not set — copy .env.example to .env and fill it in}
+      RD_REFRESH_SECS: ${RD_REFRESH_SECS:-300}
     volumes:
-      - ./config/zurg-config.yml:/app/config.template.yml:ro
-      - zurg-data:/app/data
-    ports:
-      - "9999:9999"
+      # Written by the watchlist robot: the only titles that get served.
+      - ps5plex-state:/state
     healthcheck:
-      # The image's own healthcheck. zurg does not open this port until Real-Debrid
-      # accepts the token, so a passing check also means "your RD_TOKEN is good".
-      test: ["CMD", "/app/healthcheck.sh"]
-      interval: 5s
-      timeout: 3s
-      retries: 24
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://localhost:8080/')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
       start_period: 15s
 
   plex:
@@ -41,7 +34,7 @@ services:
     container_name: ps5plex-plex
     restart: "no"
     depends_on:
-      zurg:
+      rdserve:
         condition: service_healthy
     # Required for rclone's FUSE mount inside the container.
     devices:
@@ -89,7 +82,6 @@ services:
       - ps5plex-state:/state
 
 volumes:
-  zurg-data:
   plex-config:
   plex-library:
   ps5plex-state:

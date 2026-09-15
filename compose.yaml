@@ -70,6 +70,21 @@ services:
       # disk, so keep the churn in memory and leave nothing behind on exit.
       - /transcode:size=6g
 
+  watchlist:
+    build:
+      context: .
+      dockerfile: watchlist/Dockerfile
+    container_name: ps5plex-watchlist
+    restart: "no"
+    depends_on:
+      zurg:
+        condition: service_healthy
+    environment:
+      PLEX_TOKEN: ${PLEX_TOKEN:-}
+      RD_TOKEN: ${RD_TOKEN:-}
+      SCRAPER_URL: ${SCRAPER_URL:-}
+      WATCHLIST_INTERVAL: ${WATCHLIST_INTERVAL:-120}
+
 volumes:
   zurg-data:
   plex-config:

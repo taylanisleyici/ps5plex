@@ -19,6 +19,7 @@ import sys
 
 from classify import VIDEO_EXTS, classify, _first
 from guessit import guessit
+from rank import score
 
 SOURCE = pathlib.Path(os.environ.get("LIBRARIAN_SOURCE", "/media/__all__"))
 TARGET = pathlib.Path(os.environ.get("LIBRARIAN_TARGET", "/library"))
@@ -106,7 +107,10 @@ def main():
     if not SOURCE.exists():
         sys.exit(f"[librarian] source {SOURCE} is missing — is the mount up?")
 
-    wanted, created, counts = set(), 0, {"movie": 0, "series": 0, "skipped": 0}
+    wanted, created = set(), 0
+    counts = {"movie": 0, "series": 0, "skipped": 0, "junk": 0, "losers": 0}
+    movies = {}          # (title, year) -> best candidate so far
+
     for folder in sorted(SOURCE.iterdir()):
         if not folder.is_dir():
             continue
@@ -115,11 +119,43 @@ def main():
         if not files:
             counts["skipped"] += 1
             continue
-        pairs = plan_movie(info, files) if kind == "movie" else plan_series(info, files)
+
+        if kind == "series":
+            pairs = plan_series(info, files)
+            if not pairs:
+                counts["skipped"] += 1
+                continue
+            counts["series"] += 1
+            for src, dst in pairs:
+                wanted.add(dst)
+                created += link(src, dst)
+            continue
+
+        # Movies compete: several torrents can be the same film in different
+        # quality, and a camera rip must never win over a real release.
+        try:
+            size = files[0].stat().st_size
+        except OSError:
+            size = 0
+        points = score(folder.name, size)
+        if points is None:
+            counts["junk"] += 1          # CAM/TS/screener — never link it
+            continue
+        key = (info["title"].lower(), info.get("year"))
+        best = movies.get(key)
+        if best is None or points > best[0]:
+            if best is not None:
+                counts["losers"] += 1
+            movies[key] = (points, info, files)
+        else:
+            counts["losers"] += 1
+
+    for points, info, files in movies.values():
+        pairs = plan_movie(info, files)
         if not pairs:
             counts["skipped"] += 1
             continue
-        counts[kind] += 1
+        counts["movie"] += 1
         for src, dst in pairs:
             wanted.add(dst)
             created += link(src, dst)
@@ -135,8 +171,9 @@ def main():
             path.rmdir()
 
     print(f"[librarian] {counts['movie']} movies, {counts['series']} series "
-          f"({len(wanted)} links: +{created} new, -{removed} stale, "
-          f"{counts['skipped']} skipped)")
+          f"({len(wanted)} links: +{created} new, -{removed} stale) | "
+          f"dropped {counts['junk']} cam/screener, {counts['losers']} lower-quality "
+          f"duplicates, {counts['skipped']} unusable")
 
 
 if __name__ == "__main__":

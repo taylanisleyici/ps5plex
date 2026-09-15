@@ -55,6 +55,31 @@ Nothing runs in the background. You start it when you want to watch something an
 4. **PS5.** Install Plex from the PlayStation Store, sign in to the same Plex
    account, and the server appears.
 
+## The watchlist robot
+
+Add a title to your Plex Watchlist — from the PS5 Plex app, your phone, anywhere
+— and within ~2 minutes it is in your library and playable.
+
+Two values in `.env` switch it on:
+
+```
+./scripts/plex-token.sh          # fills PLEX_TOKEN (needs the server claimed)
+SCRAPER_URL=...                  # your Stremio addon's install URL
+```
+
+`SCRAPER_URL` is whichever scraper you already use in Stremio — Comet, Torrentio
+or MediaFusion. In Stremio: Addons -> the addon -> copy install URL, minus the
+trailing `/manifest.json`. It already carries your Real-Debrid configuration.
+They all speak the same `/stream/{type}/{imdb}.json` shape.
+
+Note Torrentio is behind Cloudflare and returns 403 to anything that isn't a
+browser, so Comet or MediaFusion work better here.
+
+What it does each pass: read the Watchlist, resolve each title to an IMDb id, ask
+the scraper what exists, score the candidates with the same `rank.py` the
+librarian uses, and send the winner to Real-Debrid. Camera rips are never
+selected, whatever their claimed resolution.
+
 ## Daily use
 
 ```

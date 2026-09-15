@@ -17,6 +17,14 @@ retain_folder_name_extension: true
 # RAR'd torrents are useless for streaming — drop them rather than surface them.
 auto_delete_rar_torrents: true
 
+# Real-Debrid links go dead when a torrent loses seeders or its cached copy
+# expires: the file still lists, but unrestricting it returns 400/404 and Plex
+# reports "check that the file exists and the necessary drive is mounted".
+# Repair re-adds those torrents so the link comes back.
+enable_repair: true
+repair_every_mins: 60
+restrict_repair_to_cached: true
+
 # No `directories:` rules on purpose. Splitting movies from shows by regex on the
 # release name was wrong often enough to matter (and got every series filed as a
 # movie whenever Go happened to iterate the config map in the unlucky order).

@@ -2,6 +2,16 @@
 
 Watch your Real-Debrid library on the PS5, served from this Mac.
 
+| What | Where |
+|---|---|
+| **Source picker** (phone or Mac) | **http://192.168.3.20:8099** |
+| Plex web | http://192.168.3.20:32400/web |
+| Plex on the PS5 | sign in to the same Plex account |
+
+Those use this Mac's current LAN address. If your router hands it a different
+one, find it with `ipconfig getifaddr en0` and update `PLEX_ADVERTISE_URL` in
+`.env`. A DHCP reservation on the router avoids the problem entirely.
+
 ```
 Real-Debrid --> zurg (WebDAV) --> rclone mount --> librarian --> Plex --> PS5
 ```
@@ -155,6 +165,22 @@ Ctrl+C                 # stop — nothing is left running
 The Mac has to stay awake while you're watching.
 
 ## Gotchas
+
+**The PS5 says "Currently Unavailable".** Its Plex app rejects the server's TLS
+certificate — the server log shows `CERT: incomplete TLS handshake ... tlsv1
+alert unknown ca`. This is a Plex bug, not a network problem, and it happens on
+bare-metal installs too. The fix is to make Plex mint a fresh certificate:
+
+```
+docker compose stop plex
+docker run --rm -v ps5plex_plex-config:/config alpine \
+  rm -f "/config/Library/Application Support/Plex Media Server/Cache/certificate.p12"
+docker compose up -d plex
+```
+
+Keep **secure connections on "Preferred"**, not Required or Disabled. Everything
+else — DNS, firewall, subnets, the `172.x` address Docker advertises — is a red
+herring here; read the server log before chasing any of it.
 
 **"Not authorized" in the browser, and Plex thinking your PS5 is remote.** Behind
 Docker's NAT every connection appears to come from the bridge gateway

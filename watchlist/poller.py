@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 
 import requests
 
-from rank import score
+from rank import origin_language, score
 
 PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "").strip()
 RD_TOKEN = os.environ.get("RD_TOKEN", "").strip()
@@ -100,6 +100,17 @@ def rd_existing_names():
     return {t.get("filename", "").lower() for t in r.json()}
 
 
+def title_origin(kind, imdb):
+    """The language a title was made in, so a dub away from it can be avoided."""
+    try:
+        r = requests.get(f"{CINEMETA}/meta/{'series' if kind == 'show' else 'movie'}/{imdb}.json",
+                         timeout=30)
+        r.raise_for_status()
+        return origin_language(r.json().get("meta", {}).get("country"))
+    except Exception:
+        return None
+
+
 def aired_seasons(imdb):
     """Seasons of a series that have actually aired, from Stremio's metadata.
 
@@ -120,7 +131,7 @@ def aired_seasons(imdb):
     return sorted(seasons)
 
 
-def best_series_release(imdb, season):
+def best_series_release(imdb, season, origin=None):
     """Pick one torrent for a season.
 
     We ask the scraper for episode 1. Comet resolves season packs down to the
@@ -137,7 +148,7 @@ def best_series_release(imdb, season):
         release, info_hash, size, cached = _stream_fields(s)
         if not (release and info_hash):
             continue
-        points = score(release, size)
+        points = score(release, size, origin)
         if points is None:
             continue
         if cached:
@@ -161,7 +172,7 @@ def _stream_fields(s):
     return release, info_hash, hints.get("videoSize") or 0, ("⚡" in badge or "[RD+]" in badge)
 
 
-def best_release(kind, imdb):
+def best_release(kind, imdb, origin=None):
     """Ask the scraper what exists and pick the release the PS5 plays best."""
     url = f"{SCRAPER}/stream/{'series' if kind == 'show' else 'movie'}/{imdb}.json"
     r = requests.get(url, timeout=90, headers={"User-Agent": "Mozilla/5.0"})
@@ -171,7 +182,7 @@ def best_release(kind, imdb):
         release, info_hash, size, cached = _stream_fields(s)
         if not (release and info_hash):
             continue
-        points = score(release, size)
+        points = score(release, size, origin)
         if points is None:
             continue          # CAM/TS/screener — never selected
         if cached:
@@ -256,7 +267,7 @@ def _add_and_record(found, title, imdb, key, kind, managed, season=None):
 def _fetch_movie(title, imdb, key, managed, torrents):
     if _adopt(title, imdb, key, managed, torrents):
         return
-    found = best_release("movie", imdb)
+    found = best_release("movie", imdb, title_origin("movie", imdb))
     if not found:
         print(f"[watchlist] {title}: nothing usable found (all junk, or no results)")
         return
@@ -265,6 +276,7 @@ def _fetch_movie(title, imdb, key, managed, torrents):
 
 def _fetch_series(title, imdb, key, managed, torrents):
     """One season pack per aired season, rather than one torrent per episode."""
+    origin = title_origin("show", imdb)
     seasons = aired_seasons(imdb)
     if not seasons:
         print(f"[watchlist] {title}: no aired seasons found")
@@ -275,7 +287,7 @@ def _fetch_series(title, imdb, key, managed, torrents):
             continue
         if _adopt(title, imdb, key, managed, torrents, season):
             continue
-        found = best_series_release(imdb, season)
+        found = best_series_release(imdb, season, origin)
         if not found:
             print(f"[watchlist] {title} S{season:02d}: nothing usable found")
             continue

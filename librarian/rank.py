@@ -20,17 +20,55 @@ RESOLUTION = {"1080p": 100, "720p": 40, "2160p": 30, "480p": 5}   # 2160p costs 
 CODEC = {"x264": 60, "x265": 0}
 SOURCE_BONUS = {"bluray": 25, "remux": 20, "web-dl": 20, "webdl": 20, "webrip": 10, "hdtv": 0}
 
-# Releases dubbed or hard-subbed into a language you do not read are useless no
-# matter how clean the video is. Without this a Chinese-subbed rip of The Pitt
-# outscored the English one purely on file size.
-FOREIGN = {
-    "chs": 90, "cht": 90, "中字": 90, "castellano": 90, "latino": 90, "lat": 40,
-    "subtitulado": 90, "vff": 90, "vostfr": 90, "truefrench": 90, "french": 60,
-    "nordic": 50, "hindi": 90, "tamil": 90, "telugu": 90, "korsub": 90,
-    "dublado": 90, "ita": 40, "esp": 60, "rus": 60, "multi": 15,
+# Always prefer the original audio. What ruins a release is a DUB into a
+# language the title was not made in — not subtitles, which sit on top of the
+# original audio and can be switched off.
+#
+# So "VOSTFR" (French subs, Japanese audio) is fine, while "Castellano"
+# (Spanish dub) is not, and for a Turkish series a Turkish track IS the original.
+DUB_MARKERS = {
+    "dublado": "pt", "dublado.official": "pt", "castellano": "es", "latino": "es",
+    "dual-lat": "es", "espanol": "es", "truefrench": "fr", "vff": "fr", "vfq": "fr",
+    "german": "de", "deutsch": "de", "hindi": "hi", "tamil": "ta", "telugu": "te",
+    "rus": "ru", "russian": "ru", "ita": "it", "italian": "it", "dublaj": "tr",
 }
-# ...unless English is clearly present too.
-ENGLISH = ("eng", "english", "englisn", "en")
+# Subtitles leave the original audio alone, but burned-in ones cannot be turned
+# off, so they are worth avoiding. Chinese scene tags in particular almost always
+# mean hardsubs.
+HARDSUB_MARKERS = ("chs", "cht", "中字", "subtitulado", "hardsub", "hc")
+SOFTSUB_MARKERS = ("vostfr", "esubs", "msubs", "multisub", "subbed", "eng.subs",
+                   "engsubs", "sub.ita")
+
+# How each language shows up in a release name, so we can tell "also has the
+# original audio" from "dubbed over it".
+LANGUAGE_TOKENS = {
+    "en": ("eng", "english"), "ja": ("jpn", "japanese", "jap"),
+    "tr": ("tur", "turkish", "turkce"), "fr": ("fre", "french", "vff", "truefrench"),
+    "de": ("ger", "german", "deutsch"), "es": ("spa", "spanish", "castellano", "latino"),
+    "it": ("ita", "italian"), "ru": ("rus", "russian"), "zh": ("chi", "chinese", "chs", "cht"),
+    "ko": ("kor", "korean"), "hi": ("hin", "hindi"), "pt": ("por", "portuguese", "dublado"),
+}
+# Several audio tracks, so the original is in there somewhere.
+MULTI_MARKERS = ("multi", "dual", "dual.audio", "dualaudio")
+
+# Which language a title was actually made in, inferred from its country.
+COUNTRY_LANGUAGE = {
+    "united states": "en", "united kingdom": "en", "canada": "en",
+    "australia": "en", "ireland": "en", "new zealand": "en",
+    "japan": "ja", "turkey": "tr", "türkiye": "tr", "france": "fr",
+    "germany": "de", "spain": "es", "mexico": "es", "argentina": "es",
+    "italy": "it", "russia": "ru", "china": "zh", "hong kong": "zh",
+    "taiwan": "zh", "south korea": "ko", "korea": "ko", "india": "hi",
+    "brazil": "pt", "portugal": "pt",
+}
+
+
+def origin_language(country):
+    """Best guess at a title's original language from its country of origin."""
+    if not country:
+        return None
+    first = str(country).split(",")[0].strip().lower()
+    return COUNTRY_LANGUAGE.get(first)
 
 
 def tokens(name):
@@ -41,8 +79,12 @@ def is_banned(name):
     return bool(tokens(name) & set(BANNED))
 
 
-def score(name, size_bytes=0):
-    """Higher is better. None means the release must never be used."""
+def score(name, size_bytes=0, origin=None):
+    """Higher is better. None means the release must never be used.
+
+    `origin` is the title's original language (see origin_language); when known,
+    a dub into any other language is heavily penalised.
+    """
     if is_banned(name):
         return None
 
@@ -74,12 +116,22 @@ def score(name, size_bytes=0):
         points -= 15
 
     toks = tokens(name)
-    has_english = bool(toks & set(ENGLISH))
-    for marker, penalty in FOREIGN.items():
-        if marker in toks or marker in low:
-            # A dual-language release that includes English is still watchable.
-            points -= penalty // 3 if has_english else penalty
-            break
+    flat = low.replace(" ", ".")
+
+    dubbed_into = next((lang for marker, lang in DUB_MARKERS.items()
+                        if marker in toks or marker in flat), None)
+    if dubbed_into and dubbed_into != origin:
+        # "ENG.ITA" lists two audio tracks; it is not an Italian dub of an
+        # English show. If the original language is named, the original is there.
+        origin_present = origin and any(tok in toks or tok in flat
+                                        for tok in LANGUAGE_TOKENS.get(origin, ()))
+        multi = origin_present or any(m in toks or m in flat for m in MULTI_MARKERS)
+        points -= 30 if multi else 90
+
+    if any(m in toks or m in flat for m in HARDSUB_MARKERS):
+        points -= 60          # burned into the picture, cannot be switched off
+    elif any(m in toks or m in flat for m in SOFTSUB_MARKERS):
+        points -= 5
 
     # Mild nudge towards the larger of two otherwise-equal releases.
     points += min(size_bytes / (1024 ** 3), 20) * 0.5

@@ -93,8 +93,20 @@ resolves a season pack down to the individual episode file, but reports the
 *torrent's* hash — so adding it pulls in the whole season. One request and one
 add per season, not per episode.
 
-Release language is part of the ranking, not an afterthought: without it a
-Chinese-subbed rip of The Pitt outscored the English one on file size alone.
+### Original audio
+
+Ranking prefers the language a title was actually made in, not English. Stremio's
+metadata gives the country of origin, which maps to a language, and a dub *away*
+from it is penalised heavily.
+
+The distinction that matters is dub versus subtitle. `VOSTFR` is French subtitles
+over Japanese audio — fine. `Castellano` is a Spanish dub — not fine. And for a
+Spanish film, Castellano *is* the original, so it carries no penalty at all.
+`ENG.ITA` lists two audio tracks rather than being an Italian dub, so naming the
+original language cancels most of the penalty.
+
+Burned-in subtitles (`CHS`, `中字`) are penalised harder than soft ones, since
+they cannot be switched off.
 
 ### Rate limits
 

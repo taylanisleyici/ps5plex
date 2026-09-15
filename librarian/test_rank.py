@@ -28,16 +28,36 @@ def main():
     assert score("Movie.2024.720p.WEB-DL.x264.mkv") is not None
     assert score("Movie.2024.1080p.HDCAM.mkv") is None
 
-    # a Chinese-subbed rip must not beat the plain English release
-    assert score("The.Pitt.S01E01.1080p.ENG.ITA.H264-TheBlackKing.mkv") > \
-           score("匹兹堡医护前线.2025.S01E01.HD1080P.AAC.H264.CHS-ENG.mkv")
-    # nor a Spanish-dubbed one
-    assert score("Movie.2024.1080p.BluRay.x264-GRP.mkv") > \
-           score("Movie.2024.1080p.BluRay.x264.Castellano.Latino.mkv")
-    # dual-audio including English is only mildly penalised, not excluded
-    assert score("Movie.2024.1080p.BluRay.x264.MULTi.ENG.mkv") is not None
+    # a Chinese hard-subbed rip must not beat the plain English release
+    assert score("The.Pitt.S01E01.1080p.ENG.ITA.H264-TheBlackKing.mkv", origin="en") > \
+           score("匹兹堡医护前线.2025.S01E01.HD1080P.AAC.H264.CHS-ENG.mkv", origin="en")
 
-    print("ok — 10 assertions")
+    # a Spanish dub of an American film loses to the plain release
+    assert score("Movie.2024.1080p.BluRay.x264-GRP.mkv", origin="en") > \
+           score("Movie.2024.1080p.BluRay.x264.Castellano.mkv", origin="en")
+
+    # but for a Spanish film, Castellano IS the original audio — no penalty
+    assert score("Pelicula.2024.1080p.BluRay.x264.Castellano.mkv", origin="es") == \
+           score("Pelicula.2024.1080p.BluRay.x264.mkv", origin="es")
+
+    # and for a Turkish series a Turkish track is the original, not a dub
+    assert score("Dizi.2024.1080p.WEB-DL.x264.Turkce.Dublaj.mkv", origin="tr") > \
+           score("Dizi.2024.1080p.WEB-DL.x264.Turkce.Dublaj.mkv", origin="en")
+
+    # subtitles are not dubs: VOSTFR keeps the original Japanese audio
+    assert score("Anime.S01E01.1080p.BluRay.x264.VOSTFR.mkv", origin="ja") > \
+           score("Anime.S01E01.1080p.BluRay.x264.TRUEFRENCH.mkv", origin="ja")
+
+    # dual audio keeps the original in there somewhere, so only a light penalty
+    assert score("Anime.S01E01.1080p.BluRay.x264.Dual.Audio.ITA.mkv", origin="ja") > \
+           score("Anime.S01E01.1080p.BluRay.x264.ITA.mkv", origin="ja")
+
+    from rank import origin_language
+    assert origin_language("Japan") == "ja"
+    assert origin_language("United States, Hong Kong") == "en"
+    assert origin_language(None) is None
+
+    print("ok — 16 assertions")
 
 
 if __name__ == "__main__":

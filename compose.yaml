@@ -35,8 +35,9 @@ services:
 
   plex:
     build:
-      context: ./docker
-      dockerfile: plex.Dockerfile
+      # Context is the repo root so the Dockerfile can COPY librarian/ as well.
+      context: .
+      dockerfile: docker/plex.Dockerfile
     container_name: ps5plex-plex
     restart: "no"
     depends_on:
@@ -59,7 +60,9 @@ services:
       PLEX_ADVERTISE_URL: ${PLEX_ADVERTISE_URL:-}
     volumes:
       - plex-config:/config
+      - plex-library:/library
       - ./config/rclone.conf:/etc/rclone/rclone.conf:ro
+      - ./config/overrides.yml:/etc/ps5plex/overrides.yml:ro
     ports:
       - "32400:32400"
     tmpfs:
@@ -70,3 +73,4 @@ services:
 volumes:
   zurg-data:
   plex-config:
+  plex-library:

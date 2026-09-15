@@ -1,0 +1,5 @@
+# Releases no parser can classify from the name alone — anime batches with no
+# season, episode or "complete series" token anywhere. Substring match, first
+# hit wins. Value must be `movie` or `series`.
+shingeki no kyojin: series
+frieren: series

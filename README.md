@@ -3,8 +3,20 @@
 Watch your Real-Debrid library on the PS5, served from this Mac.
 
 ```
-Real-Debrid --> zurg (WebDAV) --> rclone mount --> Plex --> PS5
+Real-Debrid --> zurg (WebDAV) --> rclone mount --> librarian --> Plex --> PS5
 ```
+
+zurg serves every torrent as a flat folder named after the release. The
+**librarian** reads those names, works out what each one actually is, and builds
+a symlink tree Plex can read cleanly:
+
+```
+/library/movies/La La Land (2016)/La La Land (2016).mkv
+/library/shows/The Boys/Season 05/The Boys - S05E01.mkv
+```
+
+Symlinks download nothing — they point back into the mount, which streams on
+demand.
 
 Nothing runs in the background. You start it when you want to watch something and
 `Ctrl+C` when you're done.
@@ -74,13 +86,23 @@ media analysis are all disabled — each one reads whole files off Real-Debrid.
 **Release extras hijack the movie.** Groups like Tigole ship the feature plus a
 dozen featurettes in one folder, and Plex's movie scanner treats every video file
 in a folder as its own movie — so clicking "La La Land" can start a 120 MB
-making-of. `only_show_the_biggest_file: true` on the movies directory in
-`config/zurg-config.yml` exposes only the feature.
+making-of. The librarian links only the largest file of a movie torrent.
 
-**zurg directory order is random without `group_order`.** `directories:` is a YAML
-map and Go iterates maps in random order, so the movies catch-all regex can win
-before `shows` is ever tested — silently putting every series in Movies. The
-explicit `group_order` is load-bearing.
+**Classification is parsing, not regex.** Deciding movie-vs-series from a release
+name is genuinely hard: `Invencible [HDTV 1080p][Cap.406]`,
+`Паук Нуар - 1 сезон`, `[Anime Time] Attack On Titan (Complete Collection)`.
+`librarian/classify.py` uses **guessit**, a maintained release-name parser, plus
+two guards found by testing against this actual library:
+
+  * guessit reads a leading number and a year as season/episode, turning
+    *10 Things I Hate About You (1999)* into S1999E10. Real seasons are small.
+  * "Complete Series"/"Complete Collection" packs carry no season token at all.
+
+That reaches ~97% on the 87 releases here. The remainder are anime batches with
+no season, episode or keyword anywhere in the name — undecidable from the name,
+so they go in `config/overrides.yml`.
+
+Run `python3 librarian/test_classify.py` to check the rules still hold.
 
 **Give the Docker VM enough CPU.** Docker Desktop → Settings → Resources. There's no
 hardware transcoding here (that's a Plex Pass feature), so software transcoding is

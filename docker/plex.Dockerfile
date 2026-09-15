@@ -10,14 +10,20 @@ ARG TARGETARCH
 ARG RCLONE_VERSION=v1.75.1
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends fuse3 unzip curl ca-certificates python3 \
+ && apt-get install -y --no-install-recommends fuse3 unzip curl ca-certificates python3 python3-pip \
  && curl -fsSL "https://downloads.rclone.org/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-linux-${TARGETARCH}.zip" -o /tmp/rclone.zip \
  && unzip -j /tmp/rclone.zip '*/rclone' -d /usr/local/bin \
  && chmod +x /usr/local/bin/rclone \
  && echo user_allow_other >> /etc/fuse.conf \
  && mkdir -p /etc/rclone /media \
+ && pip3 install --no-cache-dir --break-system-packages guessit \
  && rm -rf /tmp/rclone.zip /var/lib/apt/lists/*
 
-COPY plex-prefs.sh    /custom-cont-init.d/05-plex-prefs
-COPY rclone-mount.sh  /custom-cont-init.d/10-rclone-mount
-RUN chmod +x /custom-cont-init.d/05-plex-prefs /custom-cont-init.d/10-rclone-mount
+COPY librarian/ /opt/librarian/
+
+COPY docker/plex-prefs.sh    /custom-cont-init.d/05-plex-prefs
+COPY docker/rclone-mount.sh  /custom-cont-init.d/10-rclone-mount
+COPY docker/librarian.sh     /custom-cont-init.d/20-librarian
+RUN chmod +x /custom-cont-init.d/05-plex-prefs \
+             /custom-cont-init.d/10-rclone-mount \
+             /custom-cont-init.d/20-librarian

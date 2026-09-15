@@ -1,0 +1,6 @@
+# secrets — the RD token is a bearer credential for a paid account
+.env
+
+# runtime
+data/
+*.log

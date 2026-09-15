@@ -1,0 +1,72 @@
+# ps5plex — Real-Debrid -> Plex -> PS5
+#
+# Start:  docker compose up          (foreground; Ctrl+C stops everything)
+# Stop:   Ctrl+C
+#
+# `restart: no` is deliberate and load-bearing: nothing here should ever come back
+# on its own or survive the terminal you started it in.
+
+services:
+  zurg:
+    image: ghcr.io/debridmediamanager/zurg-testing:latest
+    container_name: ps5plex-zurg
+    restart: "no"
+    # zurg ignores the TOKEN environment variable whenever a config file is
+    # already present — env is only used to bootstrap a config on a fresh start.
+    # So the token is prepended to the committed template at boot, which keeps the
+    # secret in .env alone and the config file free of credentials.
+    entrypoint: ["sh", "-c", "printf 'token: %s\\n' \"$$TOKEN\" | cat - /app/config.template.yml > /app/config.yml && exec ./zurg"]
+    environment:
+      TOKEN: ${RD_TOKEN:?RD_TOKEN is not set — copy .env.example to .env and fill it in}
+      LOG_LEVEL: INFO
+    volumes:
+      - ./config/zurg-config.yml:/app/config.template.yml:ro
+      - zurg-data:/app/data
+    ports:
+      - "9999:9999"
+    healthcheck:
+      # The image's own healthcheck. zurg does not open this port until Real-Debrid
+      # accepts the token, so a passing check also means "your RD_TOKEN is good".
+      test: ["CMD", "/app/healthcheck.sh"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 15s
+
+  plex:
+    build:
+      context: ./docker
+      dockerfile: plex.Dockerfile
+    container_name: ps5plex-plex
+    restart: "no"
+    depends_on:
+      zurg:
+        condition: service_healthy
+    # Required for rclone's FUSE mount inside the container.
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      TZ: ${TZ:-Europe/Istanbul}
+      VERSION: docker
+      # Only needed on the very first run — get one at https://plex.tv/claim
+      # (it expires 4 minutes after you generate it).
+      PLEX_CLAIM: ${PLEX_CLAIM:-}
+      # This Mac's LAN address, so Plex advertises something the PS5 can reach.
+      PLEX_ADVERTISE_URL: ${PLEX_ADVERTISE_URL:-}
+    volumes:
+      - plex-config:/config
+      - ./config/rclone.conf:/etc/rclone/rclone.conf:ro
+    ports:
+      - "32400:32400"
+    tmpfs:
+      # Transcoding scratch space. There is 24 GB of RAM and only ~107 GB of free
+      # disk, so keep the churn in memory and leave nothing behind on exit.
+      - /transcode:size=6g
+
+volumes:
+  zurg-data:
+  plex-config:

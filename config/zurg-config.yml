@@ -6,8 +6,14 @@
 zurg: v1
 port: 9999
 
-concurrent_workers: 20
-check_for_changes_every_secs: 10
+# Real-Debrid rate-limits its API hard, and an over-eager client gets its IP
+# refused on api.real-debrid.com (the website keeps working, which makes it look
+# like a network fault rather than a limit). Keep the polling gentle.
+concurrent_workers: 5
+check_for_changes_every_secs: 60
+
+api_rate_limit_per_minute: 60
+torrents_rate_limit_per_minute: 25
 
 # Keep the original release name — the librarian parses it to work out what each
 # torrent actually is.
@@ -17,12 +23,11 @@ retain_folder_name_extension: true
 # RAR'd torrents are useless for streaming — drop them rather than surface them.
 auto_delete_rar_torrents: true
 
-# Real-Debrid links go dead when a torrent loses seeders or its cached copy
-# expires: the file still lists, but unrestricting it returns 400/404 and Plex
-# reports "check that the file exists and the necessary drive is mounted".
-# Repair re-adds those torrents so the link comes back.
-enable_repair: true
-repair_every_mins: 60
+# Repair re-adds torrents whose Real-Debrid links have gone dead. Left OFF: it
+# costs a burst of API calls, and getting rate-limited is worse than a few dead
+# links. Turn it on deliberately if links start rotting.
+enable_repair: false
+repair_every_mins: 360
 restrict_repair_to_cached: true
 
 # No `directories:` rules on purpose. Splitting movies from shows by regex on the

@@ -69,22 +69,34 @@ def rd_existing_names():
 def best_release(kind, imdb):
     """Ask the scraper what exists and pick the release the PS5 plays best."""
     url = f"{SCRAPER}/stream/{'series' if kind == 'show' else 'movie'}/{imdb}.json"
-    r = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+    r = requests.get(url, timeout=90, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     best = None
     for s in r.json().get("streams", []):
-        name = f"{s.get('title', '')} {s.get('name', '')}".replace("\n", " ").strip()
-        magnet = s.get("infoHash")
-        if not magnet:
+        hints = s.get("behaviorHints") or {}
+        # Comet puts the real release name and the info hash in behaviorHints;
+        # `name` is only a badge like "[RD⚡] Comet 2160p", which tells you
+        # nothing about codec or source.
+        release = hints.get("filename") or ""
+        if not release:
+            first = (s.get("description") or "").split("\n")[0]
+            release = first.lstrip("📄 ").strip()
+        # bingeGroup looks like "comet|realdebrid|<infohash>"
+        info_hash = ""
+        for part in str(hints.get("bingeGroup", "")).split("|"):
+            if len(part) == 40 and all(c in "0123456789abcdefABCDEF" for c in part):
+                info_hash = part.lower()
+        if not (release and info_hash):
             continue
-        points = score(name)          # None for CAM/TS/screener — never selected
+        points = score(release, hints.get("videoSize") or 0)
         if points is None:
-            continue
-        # A release Real-Debrid already has cached starts instantly.
-        if "⚡" in name or "[RD+]" in name:
+            continue          # CAM/TS/screener — never selected
+        # Already cached at Real-Debrid means it plays immediately instead of
+        # waiting on a download.
+        if "⚡" in (s.get("name") or "") or "[RD+]" in (s.get("name") or ""):
             points += 40
         if best is None or points > best[0]:
-            best = (points, name, magnet)
+            best = (points, release, info_hash)
     return best
 
 

@@ -61,6 +61,22 @@ Nothing runs in the background. You start it when you want to watch something an
 4. **PS5.** Install Plex from the PlayStation Store, sign in to the same Plex
    account, and the server appears.
 
+## Choosing what to watch
+
+Open **http://localhost:8099** — it lists your Plex Watchlist, and for each title
+every available release, ranked best-first, with size and whether Real-Debrid
+already has it cached. Click one and only that one is added. Like Stremio's
+stream list, and nothing is fetched behind your back.
+
+The same page lists what is currently in your library, with a remove button.
+
+Automatic fetching still exists but is **off by default**. `AUTO_FETCH=1` turns it
+on and `MAX_PER_TITLE` caps it, because the first version quietly pulled 17
+torrents for a single show.
+
+Taking a title off your Watchlist removes it from the library on the next pass.
+The torrent stays in your Real-Debrid account; only the library forgets it.
+
 ## The watchlist robot
 
 Add a title to your Plex Watchlist — from the PS5 Plex app, your phone, anywhere

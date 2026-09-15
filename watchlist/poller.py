@@ -33,6 +33,11 @@ RD_TOKEN = os.environ.get("RD_TOKEN", "").strip()
 # /stream/{type}/{imdb}.json shape, so paste whichever you already use.
 SCRAPER = os.environ.get("SCRAPER_URL", "").strip().rstrip("/")
 INTERVAL = int(os.environ.get("WATCHLIST_INTERVAL", "120"))
+# Fetching is manual by default — use the picker at :8081. Automatic fetching
+# once pulled 17 torrents for a single show without showing any of them.
+AUTO_FETCH = os.environ.get("AUTO_FETCH", "0") == "1"
+# Even in automatic mode, never pull a back catalogue off one watchlist entry.
+MAX_PER_TITLE = int(os.environ.get("MAX_PER_TITLE", "3"))
 
 STATE = os.environ.get("PS5PLEX_STATE", "/state/managed.json")
 
@@ -249,13 +254,33 @@ def add_to_rd(info_hash):
     return tid
 
 
+def prune(managed, on_watchlist):
+    """Forget titles no longer on the watchlist.
+
+    Only the library forgets them — the torrents stay in your Real-Debrid
+    account. The librarian drops their symlinks on its next pass.
+    """
+    gone = [f for f, v in managed.items()
+            if v.get("imdb") and v["imdb"] not in on_watchlist]
+    for f in gone:
+        print(f"[watchlist] {managed[f]['title']}: off your watchlist, removing from library")
+        managed.pop(f)
+    if gone:
+        save_managed(managed)
+
+
 def pass_once():
     """One sweep: anything on the watchlist we have not already handled."""
     managed = load_managed()
     handled = {v.get("ratingKey") for v in managed.values()}
     torrents = None
 
-    for kind, title, key in watchlist():
+    items = watchlist()
+    prune(managed, {imdb_id(k) for _, _, k in items} - {None})
+    if not AUTO_FETCH:
+        return              # the picker does the fetching; see picker.py
+
+    for kind, title, key in items:
         # A movie is done once fetched. A series never is: new episodes air, and
         # the torrent we picked may only have covered part of a season, so it is
         # re-examined every pass (per-episode gaps are checked in _fetch_series).
@@ -321,7 +346,7 @@ def _fetch_movie(title, imdb, key, managed, torrents):
     _add_and_record(found, title, imdb, key, "movie", managed)
 
 
-def _fetch_series(title, imdb, key, managed, torrents, budget=8):
+def _fetch_series(title, imdb, key, managed, torrents, budget=None):
     """Fill in every aired episode, using as few torrents as possible.
 
     Searching for episode 1 often returns a torrent holding the whole season, so
@@ -329,6 +354,7 @@ def _fetch_series(title, imdb, key, managed, torrents, budget=8):
     `budget` caps how many adds happen per pass so a long-running series does not
     fire off fifty API calls at once; the next pass continues where this stopped.
     """
+    budget = MAX_PER_TITLE if budget is None else budget
     origin = title_origin("show", imdb)
     schedule = aired_episodes(imdb)
     if not schedule:

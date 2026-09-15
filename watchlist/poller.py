@@ -24,6 +24,7 @@ import xml.etree.ElementTree as ET
 
 import requests
 
+from guessit import guessit
 from rank import origin_language, score
 
 PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "").strip()
@@ -37,7 +38,25 @@ STATE = os.environ.get("PS5PLEX_STATE", "/state/managed.json")
 
 CINEMETA = "https://v3-cinemeta.strem.io"
 DISCOVER = "https://discover.provider.plex.tv"
-RD = "https://api.real-debrid.com/rest/1.0"
+# api-1/api-2/api-6 are CNAMEs of api.real-debrid.com and resolve to the same
+# IPs, but some networks drop TLS handshakes whose SNI is exactly
+# "api.real-debrid.com" while letting the aliases through. Same server, same
+# API — so pick whichever actually answers.
+RD_HOSTS = ("api.real-debrid.com", "api-1.real-debrid.com",
+            "api-2.real-debrid.com", "api-6.real-debrid.com")
+
+
+def _pick_rd_host():
+    for host in RD_HOSTS:
+        try:
+            requests.get(f"https://{host}/rest/1.0/time", timeout=8).raise_for_status()
+            return host
+        except Exception:
+            continue
+    return RD_HOSTS[0]
+
+
+RD = f"https://{_pick_rd_host()}/rest/1.0"
 HEADERS = {"Accept": "application/xml", "X-Plex-Product": "ps5plex",
            "X-Plex-Client-Identifier": "ps5plex-watchlist"}
 
@@ -111,27 +130,47 @@ def title_origin(kind, imdb):
         return None
 
 
-def aired_seasons(imdb):
-    """Seasons of a series that have actually aired, from Stremio's metadata.
+def aired_episodes(imdb):
+    """{season: [episode, ...]} for everything that has actually aired.
 
-    Season 0 is specials and is skipped.
+    Season 0 is specials and is skipped, as is anything dated in the future.
     """
     r = requests.get(f"{CINEMETA}/meta/series/{imdb}.json", timeout=30)
     r.raise_for_status()
     today = time.strftime("%Y-%m-%d")
-    seasons = set()
+    out = {}
     for v in r.json().get("meta", {}).get("videos", []):
-        season = v.get("season")
-        if not season:
+        season, episode = v.get("season"), v.get("episode")
+        if not season or not episode:
             continue
         released = (v.get("released") or v.get("firstAired") or "")[:10]
         if released and released > today:
-            continue                      # not out yet
-        seasons.add(int(season))
-    return sorted(seasons)
+            continue
+        out.setdefault(int(season), []).append(int(episode))
+    return {s: sorted(set(eps)) for s, eps in sorted(out.items())}
 
 
-def best_series_release(imdb, season, origin=None):
+def covered_episodes(files):
+    """Which episode numbers a Real-Debrid torrent actually contains.
+
+    A torrent found by searching for episode 1 may hold the whole season, five
+    episodes, or just the one — there is no way to tell before adding it.
+    """
+    found = set()
+    for f in files or []:
+        if not f.get("selected"):
+            continue
+        path = f.get("path", "")
+        if not path.lower().endswith((".mkv", ".mp4", ".avi", ".m4v")):
+            continue
+        ep = guessit(path.rsplit("/", 1)[-1], {"type": "episode"}).get("episode")
+        for e in (ep if isinstance(ep, list) else [ep]):
+            if e:
+                found.add(int(e))
+    return found
+
+
+def best_series_release(imdb, season, episode=1, origin=None):
     """Pick one torrent for a season.
 
     We ask the scraper for episode 1. Comet resolves season packs down to the
@@ -140,15 +179,15 @@ def best_series_release(imdb, season, origin=None):
     One request and one add per season instead of one per episode, which matters
     when the debrid API is rate-limited.
     """
-    url = f"{SCRAPER}/stream/series/{imdb}:{season}:1.json"
+    url = f"{SCRAPER}/stream/series/{imdb}:{season}:{episode}.json"
     r = requests.get(url, timeout=90, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     best = None
     for s in r.json().get("streams", []):
-        release, info_hash, size, cached = _stream_fields(s)
+        release, info_hash, size, cached, context = _stream_fields(s)
         if not (release and info_hash):
             continue
-        points = score(release, size, origin)
+        points = score(release, size, origin, context)
         if points is None:
             continue
         if cached:
@@ -169,7 +208,11 @@ def _stream_fields(s):
         if len(part) == 40 and all(c in "0123456789abcdefABCDEF" for c in part):
             info_hash = part.lower()
     badge = s.get("name") or ""
-    return release, info_hash, hints.get("videoSize") or 0, ("⚡" in badge or "[RD+]" in badge)
+    # The description carries the torrent's own name and Comet's language flags,
+    # which is where a dub shows up when the inner file is named innocuously.
+    context = (s.get("description") or "").replace("\n", " ")
+    return (release, info_hash, hints.get("videoSize") or 0,
+            ("⚡" in badge or "[RD+]" in badge), context)
 
 
 def best_release(kind, imdb, origin=None):
@@ -179,10 +222,10 @@ def best_release(kind, imdb, origin=None):
     r.raise_for_status()
     best = None
     for s in r.json().get("streams", []):
-        release, info_hash, size, cached = _stream_fields(s)
+        release, info_hash, size, cached, context = _stream_fields(s)
         if not (release and info_hash):
             continue
-        points = score(release, size, origin)
+        points = score(release, size, origin, context)
         if points is None:
             continue          # CAM/TS/screener — never selected
         if cached:
@@ -213,7 +256,10 @@ def pass_once():
     torrents = None
 
     for kind, title, key in watchlist():
-        if key in handled:
+        # A movie is done once fetched. A series never is: new episodes air, and
+        # the torrent we picked may only have covered part of a season, so it is
+        # re-examined every pass (per-episode gaps are checked in _fetch_series).
+        if kind != "show" and key in handled:
             continue
 
         imdb = imdb_id(key)
@@ -248,20 +294,21 @@ def _adopt(title, imdb, key, managed, torrents, season=None):
     return False
 
 
-def _record(folder, title, imdb, key, kind, managed, season=None):
-    managed[folder] = {"title": title, "imdb": imdb, "kind": kind,
-                       "ratingKey": key, "season": season}
-    save_managed(managed)
-
-
 def _add_and_record(found, title, imdb, key, kind, managed, season=None):
+    """Add to Real-Debrid and record it. Returns the episodes it turned out to hold."""
     points, name, info_hash = found
     tid = add_to_rd(info_hash)
     info = requests.get(f"{RD}/torrents/info/{tid}",
                         headers={"Authorization": f"Bearer {RD_TOKEN}"}, timeout=30).json()
-    _record(info.get("filename") or name, title, imdb, key, kind, managed, season)
+    episodes = covered_episodes(info.get("files")) if season else set()
+    folder = info.get("filename") or name
+    managed[folder] = {"title": title, "imdb": imdb, "kind": kind, "ratingKey": key,
+                       "season": season, "episodes": sorted(episodes) or None}
+    save_managed(managed)
     label = f"{title} S{season:02d}" if season else title
-    print(f"[watchlist] added {label} -> {name[:62]} (score {points:.0f})")
+    extra = f" [{len(episodes)} episodes]" if len(episodes) > 1 else ""
+    print(f"[watchlist] added {label} -> {name[:58]}{extra} (score {points:.0f})")
+    return episodes
 
 
 def _fetch_movie(title, imdb, key, managed, torrents):
@@ -274,24 +321,41 @@ def _fetch_movie(title, imdb, key, managed, torrents):
     _add_and_record(found, title, imdb, key, "movie", managed)
 
 
-def _fetch_series(title, imdb, key, managed, torrents):
-    """One season pack per aired season, rather than one torrent per episode."""
+def _fetch_series(title, imdb, key, managed, torrents, budget=8):
+    """Fill in every aired episode, using as few torrents as possible.
+
+    Searching for episode 1 often returns a torrent holding the whole season, so
+    we add that first and only then fetch whatever it turned out to be missing.
+    `budget` caps how many adds happen per pass so a long-running series does not
+    fire off fifty API calls at once; the next pass continues where this stopped.
+    """
     origin = title_origin("show", imdb)
-    seasons = aired_seasons(imdb)
-    if not seasons:
-        print(f"[watchlist] {title}: no aired seasons found")
+    schedule = aired_episodes(imdb)
+    if not schedule:
+        print(f"[watchlist] {title}: no aired episodes found")
         return
-    for season in seasons:
-        if any(v.get("imdb") == imdb and v.get("season") == season
-               for v in managed.values()):
-            continue
-        if _adopt(title, imdb, key, managed, torrents, season):
-            continue
-        found = best_series_release(imdb, season, origin)
-        if not found:
-            print(f"[watchlist] {title} S{season:02d}: nothing usable found")
-            continue
-        _add_and_record(found, title, imdb, key, "show", managed, season)
+
+    for season, episodes in schedule.items():
+        have = set()
+        for folder, meta in managed.items():
+            if meta.get("imdb") == imdb and meta.get("season") == season:
+                have |= set(meta.get("episodes") or [])
+
+        for episode in episodes:
+            if episode in have:
+                continue
+            if budget <= 0:
+                print(f"[watchlist] {title}: pausing, more to fetch next pass")
+                return
+            found = best_series_release(imdb, season, episode, origin)
+            if not found:
+                print(f"[watchlist] {title} S{season:02d}E{episode:02d}: nothing usable")
+                have.add(episode)          # don't retry it every 2 minutes
+                continue
+            got = _add_and_record(found, title, imdb, key, "show", managed, season)
+            budget -= 1
+            # The torrent may well have brought its whole season with it.
+            have |= got or {episode}
 
 
 def main():
@@ -299,11 +363,11 @@ def main():
                               ("SCRAPER_URL", SCRAPER)) if not v]
     if missing:
         sys.exit(f"[watchlist] not configured: {', '.join(missing)} — see .env.example")
-    print(f"[watchlist] watching your Plex Watchlist every {INTERVAL}s")
+    print(f"[watchlist] watching your Plex Watchlist every {INTERVAL}s via {RD}")
     while True:
         try:
             pass_once()
-        except Exception as e:                       # a flaky scraper must not kill the loop
+        except Exception as e:            # a flaky scraper must not kill the loop
             print(f"[watchlist] pass failed: {type(e).__name__}: {e}")
         time.sleep(INTERVAL)
 

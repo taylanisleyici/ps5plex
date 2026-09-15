@@ -52,12 +52,26 @@ def main():
     assert score("Anime.S01E01.1080p.BluRay.x264.Dual.Audio.ITA.mkv", origin="ja") > \
            score("Anime.S01E01.1080p.BluRay.x264.ITA.mkv", origin="ja")
 
+    # a plainly-named file inside a Tamil-dubbed torrent: only the surrounding
+    # torrent name gives it away, so the context must be scored too
+    inner = "The.Pitt.S01E07.1080p.mkv"
+    assert score(inner, 0, "en") > score(
+        inner, 0, "en", context="www.1tamilblasters.cool - The Pitt (2025) S01 EP(07) Tamil")
+    # and a CAM torrent holding a plainly-named file is still a CAM
+    assert score(inner, 0, "en", context="Some.Movie.2026.HDCAM.x264") is None
+
+    # a five-dub aggregator repack must lose to a clean English release, even
+    # though it does technically include an English track
+    assert score("The.Pitt.S01E07.1080p.ENG.ITA.H264-TheBlackKing.mkv", 1_200_000_000, "en") > \
+           score("www.1tamilblasters.cool - The Pitt (2025) S01 EP(07) "
+                 "[1080p HD AVC - x264 - [Tam + Tel + Kan + Hin + Eng]", 1_390_000_000, "en")
+
     from rank import origin_language
     assert origin_language("Japan") == "ja"
     assert origin_language("United States, Hong Kong") == "en"
     assert origin_language(None) is None
 
-    print("ok — 16 assertions")
+    print("ok — 19 assertions")
 
 
 if __name__ == "__main__":

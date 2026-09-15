@@ -29,8 +29,10 @@ SOURCE_BONUS = {"bluray": 25, "remux": 20, "web-dl": 20, "webdl": 20, "webrip": 
 DUB_MARKERS = {
     "dublado": "pt", "dublado.official": "pt", "castellano": "es", "latino": "es",
     "dual-lat": "es", "espanol": "es", "truefrench": "fr", "vff": "fr", "vfq": "fr",
-    "german": "de", "deutsch": "de", "hindi": "hi", "tamil": "ta", "telugu": "te",
-    "rus": "ru", "russian": "ru", "ita": "it", "italian": "it", "dublaj": "tr",
+    "german": "de", "deutsch": "de", "hindi": "hi", "hin": "hi", "tamil": "ta",
+    "tam": "ta", "telugu": "te", "tel": "te", "kannada": "kn", "kan": "kn",
+    "malayalam": "ml", "mal": "ml", "rus": "ru", "russian": "ru", "ita": "it",
+    "italian": "it", "dublaj": "tr",
 }
 # Subtitles leave the original audio alone, but burned-in ones cannot be turned
 # off, so they are worth avoiding. Chinese scene tags in particular almost always
@@ -72,20 +74,32 @@ def origin_language(country):
 
 
 def tokens(name):
-    return set(w.strip("[]()._-").lower() for w in name.replace(".", " ").split())
+    """Split a release name on every separator groups actually use.
+
+    "The.Pitt.S01E01.CHS-ENG.mkv" -> {the, pitt, s01e01, chs, eng, mkv}. Splitting
+    only on dots and spaces left "chs-eng" glued together, so short language
+    codes were never found as whole words.
+    """
+    return {tok for tok in re.split(r"[^0-9a-z\u4e00-\u9fff]+", name.lower()) if tok}
 
 
 def is_banned(name):
     return bool(tokens(name) & set(BANNED))
 
 
-def score(name, size_bytes=0, origin=None):
+def score(name, size_bytes=0, origin=None, context=""):
     """Higher is better. None means the release must never be used.
 
     `origin` is the title's original language (see origin_language); when known,
     a dub into any other language is heavily penalised.
+
+    `context` is any extra text describing the release — a scraper's own summary,
+    or the containing torrent's name. Language markers are looked for there too,
+    because a Tamil-dubbed pack can hold a file named plainly
+    "The.Pitt.S01E07.1080p.mkv"; only the torrent name gives it away. Quality is
+    still judged on `name` alone, so a scraper's blurb cannot inflate it.
     """
-    if is_banned(name):
+    if is_banned(name) or is_banned(context):
         return None
 
     low = name.lower()
@@ -115,20 +129,34 @@ def score(name, size_bytes=0, origin=None):
     if re.search(r"(?i)\b(hdr|dovi|dolby.?vision|hdr10)\b", name):
         points -= 15
 
-    toks = tokens(name)
-    flat = low.replace(" ", ".")
+    full = f"{name} {context}"
+    toks = tokens(full)
+    flat = full.lower().replace(" ", ".")
 
-    dubbed_into = next((lang for marker, lang in DUB_MARKERS.items()
-                        if marker in toks or marker in flat), None)
-    if dubbed_into and dubbed_into != origin:
+    # Short codes must match a whole token: "castellano" contains "tel", which
+    # once made a Spanish film look Telugu. Longer markers can match anywhere,
+    # since release names glue words together with dots.
+    dubs = {lang for marker, lang in DUB_MARKERS.items()
+            if lang != origin
+            and (marker in toks if len(marker) <= 3 else (marker in toks or marker in flat))}
+    if dubs:
         # "ENG.ITA" lists two audio tracks; it is not an Italian dub of an
         # English show. If the original language is named, the original is there.
         origin_present = origin and any(tok in toks or tok in flat
                                         for tok in LANGUAGE_TOKENS.get(origin, ()))
         multi = origin_present or any(m in toks or m in flat for m in MULTI_MARKERS)
-        points -= 30 if multi else 90
+        # Each extra dub crammed in is another sign of an aggregator re-encode
+        # rather than a clean release: "[Tam + Tel + Kan + Hin + Eng]".
+        points -= (30 if multi else 90) + 10 * (len(dubs) - 1)
 
-    if any(m in toks or m in flat for m in HARDSUB_MARKERS):
+    # Releases re-uploaded by aggregator sites carry the site in the name. They
+    # are usually re-encodes, and the prefix also confuses Plex's matcher
+    # ("www.Torrenting.com - Whiplash 2014" became a film called "Www Torrenting").
+    if "www." in flat or ".com.-." in flat:
+        points -= 15
+
+    if any((m in toks if len(m) <= 3 else (m in toks or m in flat))
+           for m in HARDSUB_MARKERS):
         points -= 60          # burned into the picture, cannot be switched off
     elif any(m in toks or m in flat for m in SOFTSUB_MARKERS):
         points -= 5

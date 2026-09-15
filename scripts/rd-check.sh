@@ -1,14 +1,10 @@
 #!/bin/bash
-# Is Real-Debrid's API talking to us again?
-# The website staying up while the API is refused means we are rate-limited,
-# not blocked — the fix is to wait, not to change anything.
-site=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 12 https://real-debrid.com/ 2>/dev/null)
-api=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 12 https://api.real-debrid.com/rest/1.0/time 2>/dev/null)
-echo "website: ${site:-000}   api: ${api:-000}"
-if [ "$api" = "200" ]; then
-  echo "API is back — 'docker compose up' is safe."
-elif [ "$site" = "200" ]; then
-  echo "Still rate-limited. Wait and run this again; don't restart the stack yet."
-else
-  echo "Both down — that's a network problem, not a rate limit."
-fi
+# Which Real-Debrid hostnames are reachable from here.
+#
+# They are all CNAMEs of the same server on the same IPs, so a split result means
+# the network is filtering on the hostname in the TLS handshake — not that
+# Real-Debrid is down or your account is limited.
+for h in api.real-debrid.com api-1.real-debrid.com api-2.real-debrid.com api-6.real-debrid.com real-debrid.com; do
+  code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 12 "https://$h/" 2>/dev/null)
+  printf "  %-24s http %s\n" "$h" "${code:-000}"
+done

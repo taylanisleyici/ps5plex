@@ -260,6 +260,33 @@ Transcode scratch must stay on **disk**, never tmpfs. A 6 GB RAM disk was enough
 for a high-bitrate transcode to fill, after which the kernel SIGKILLed the
 transcoder and playback died with "Playback error".
 
+## The link is the ceiling
+
+Every byte goes Real-Debrid → this Mac → PS5. Plex clients only ever fetch from
+the Plex server; the PS5 cannot pull from Real-Debrid itself, however good its
+own connection is. So the Mac's internet link decides what plays:
+
+```
+Mac on Wi-Fi (en0)        ~64 Mbps raw, ~51 Mbps through the mount
+1080p x264 encode         ~10 Mbps   plays with room to spare
+1080p BluRay remux        ~32 Mbps   buffers, then the PS5 app gives up
+```
+
+**Plug the Mac into Ethernet.** That is the single biggest improvement available
+and costs nothing. Until then the picker estimates each release's bitrate from
+its size and the title's runtime, labels it, and pushes anything over ~60% of
+the link (`LINK_MBPS`, default 45) to the bottom. Change `LINK_MBPS` in `.env`
+after moving to Ethernet.
+
+**The PS5 app, not Plex, is what "crashes".** Its playback buffer is a few
+seconds and it abandons a stream at the first stall, then retries as a transcode,
+which stalls the same way. Server-side, Plex's transcoder throttle buffer is
+raised from 60 s to 300 s (`TranscoderThrottleBuffer`, seeded on boot), so when
+the source arrives faster than realtime the server holds a five-minute head
+start the console cannot drain. rclone also reads with a 256 MB buffer and
+rdserve caches Real-Debrid's download links instead of re-authorising every
+chunk, both to smooth the feed.
+
 ## Codecs: why the library prefers 1080p x264
 
 The PS5 decodes 4K HEVC fine — it plays 4K UHD Blu-rays. But **Plex's PS5 profile

@@ -108,6 +108,36 @@ def refresher():
         time.sleep(REFRESH)
 
 
+# Real-Debrid download links stay valid for hours, but rclone re-requests the
+# file for every chunk it reads, and each request was a fresh /unrestrict/link
+# call: ~0.6 s of dead time per 32-128 MB, plus API quota. Remember the CDN URL
+# instead, and only ask again when it has aged or actually failed.
+_direct = {}
+_direct_lock = threading.Lock()
+DIRECT_TTL = int(os.environ.get("RD_LINK_TTL_SECS", "7200"))
+
+
+def _direct_url(link, leaf):
+    now = time.time()
+    with _direct_lock:
+        hit = _direct.get(link)
+        if hit and hit[1] > now:
+            return hit[0]
+    try:
+        r = requests.post(f"{RD}/unrestrict/link", headers=AUTH,
+                          data={"link": link}, timeout=30)
+        r.raise_for_status()
+        direct = r.json()["download"]
+    except Exception as e:
+        print(f"[rdserve] unrestrict failed for {leaf}: {e}", flush=True)
+        with _direct_lock:
+            _direct.pop(link, None)
+        return None
+    with _direct_lock:
+        _direct[link] = (direct, now + DIRECT_TTL)
+    return direct
+
+
 def listing(title, entries):
     """Minimal HTML index — rclone's http backend just reads the hrefs."""
     rows = "\n".join(
@@ -153,13 +183,8 @@ class Handler(BaseHTTPRequestHandler):
         if not link:
             self.send_error(404)
             return
-        try:
-            r = requests.post(f"{RD}/unrestrict/link", headers=AUTH,
-                              data={"link": link}, timeout=30)
-            r.raise_for_status()
-            direct = r.json()["download"]
-        except Exception as e:
-            print(f"[rdserve] unrestrict failed for {leaf}: {e}", flush=True)
+        direct = _direct_url(link, leaf)
+        if not direct:
             self.send_error(502)
             return
         # Hand the client straight to Real-Debrid's CDN; range requests and all

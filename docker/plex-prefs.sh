@@ -17,6 +17,11 @@ wanted = {
     # RFC1918 space counts as local — unblocks setup and keeps playback "local".
     "allowedNetworks": "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12",
     "TranscoderTempDirectory": "/transcode",
+    # How far ahead the transcoder runs before pausing (seconds). The PS5 app
+    # buffers only a few seconds itself and abandons the stream at the first
+    # stall, so let the server build a five-minute head start whenever the
+    # source arrives faster than realtime.
+    "TranscoderThrottleBuffer": "300",
     # These each read whole files off the Real-Debrid mount. Never do that.
     "GenerateBIFBehavior": "never",
     "GenerateChapterThumbBehavior": "never",

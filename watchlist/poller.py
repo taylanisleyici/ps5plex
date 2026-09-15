@@ -124,15 +124,37 @@ def rd_existing_names():
     return {t.get("filename", "").lower() for t in r.json()}
 
 
-def title_origin(kind, imdb):
-    """The language a title was made in, so a dub away from it can be avoided."""
+def _runtime_minutes(text):
+    """Cinemeta writes runtimes as "157 min", "2h 37min" or "45 min"."""
+    if not text:
+        return None
+    h = re.search(r"(\d+)\s*h", text)
+    m = re.search(r"(\d+)\s*min", text)
+    mins = (int(h.group(1)) * 60 if h else 0) + (int(m.group(1)) if m else 0)
+    return mins or None
+
+
+def title_info(kind, imdb):
+    """Origin language and runtime from Stremio's metadata.
+
+    Runtime matters as much as language here: with the file size from the
+    scraper it gives the bitrate a release will demand, which on a Wi-Fi link
+    decides whether it plays or buffers.
+    """
     try:
         r = requests.get(f"{CINEMETA}/meta/{'series' if kind == 'show' else 'movie'}/{imdb}.json",
                          timeout=30)
         r.raise_for_status()
-        return origin_language(r.json().get("meta", {}).get("country"))
+        meta = r.json().get("meta", {})
+        return {"origin": origin_language(meta.get("country")),
+                "runtime_min": _runtime_minutes(meta.get("runtime"))}
     except Exception:
-        return None
+        return {"origin": None, "runtime_min": None}
+
+
+def title_origin(kind, imdb):
+    """The language a title was made in, so a dub away from it can be avoided."""
+    return title_info(kind, imdb)["origin"]
 
 
 def aired_episodes(imdb):

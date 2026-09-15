@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import requests
 
 import poller
-from rank import is_banned, score
+from rank import LINK_MBPS, est_mbps, is_banned, score
 
 PORT = int(os.environ.get("PICKER_PORT", "8081"))
 SUBS_DIR = pathlib.Path(os.environ.get("SUBS_DIR", "/state/subs"))
@@ -81,7 +81,8 @@ def gb(n):
 
 def candidates(kind, imdb, season=None, episode=None):
     """Every usable release for a title, best first, with why."""
-    origin = poller.title_origin(kind, imdb)
+    info = poller.title_info(kind, imdb)
+    origin, runtime = info["origin"], info["runtime_min"]
     if kind == "show":
         url = f"{poller.SCRAPER}/stream/series/{imdb}:{season or 1}:{episode or 1}.json"
     else:
@@ -95,13 +96,14 @@ def candidates(kind, imdb, season=None, episode=None):
         if not (release and info_hash) or info_hash in seen:
             continue
         seen.add(info_hash)
-        pts = score(release, size, origin, context)
+        pts = score(release, size, origin, context, runtime)
+        mbps = est_mbps(size, runtime)
         # A cached release plays now; an uncached one has to download first, and
         # Real-Debrid can spend minutes just resolving the magnet. That is worth
         # more than a few points of picture quality, so it sorts first.
         rank_pts = None if pts is None else pts + (400 if cached else 0)
         out.append({"release": release, "hash": info_hash, "size": size,
-                    "cached": cached, "score": pts, "rank": rank_pts,
+                    "cached": cached, "score": pts, "rank": rank_pts, "mbps": mbps,
                     "junk": pts is None or is_banned(release) or is_banned(context)})
     out.sort(key=lambda c: (-1e9 if c["rank"] is None else -c["rank"]))
     return out
@@ -224,6 +226,10 @@ class Handler(BaseHTTPRequestHandler):
                      else "<span class='badge cached'>&#9889; plays now</span>" if c["cached"]
                      else "<span class='badge uncached'>must download</span>")
             meta = [gb(c["size"])]
+            if c["mbps"]:
+                heavy = c["mbps"] > LINK_MBPS * 0.6
+                meta.append(f"<span class='badge {'junk' if heavy else 'uncached'}'>"
+                            f"~{c['mbps']:.0f} Mbps{' — will buffer on this link' if heavy else ''}</span>")
             if c["score"] is not None:
                 meta.append(f"score {c['score']:.0f}")
             rows.append(

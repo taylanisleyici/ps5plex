@@ -1,6 +1,13 @@
 #!/usr/bin/with-contenv bash
 # Mounts rdserve's HTTP tree at /media before Plex starts.
 #
+# The read buffer is large on purpose. The Mac reaches Real-Debrid over Wi-Fi at
+# ~64 Mbps with dips, and the PS5's own playback buffer is tiny: any stall in the
+# feed makes its app abandon the stream and fall back to a transcode, which then
+# stalls the same way. 256 MB in memory per open file rides out those dips, and
+# letting chunks grow without limit turns a file into one long-lived request
+# instead of a fresh HTTP round-trip every 128 MB.
+#
 # vfs-cache-mode is OFF on purpose. In `full` mode rclone downloads each file in
 # its ENTIRETY the first time anything reads a single byte of it — so merely
 # scanning the library drags it all onto local disk. Off means pure passthrough
@@ -25,9 +32,9 @@ rclone mount rd: "$MOUNT" \
   --poll-interval 0 \
   --read-only \
   --vfs-cache-mode off \
-  --vfs-read-chunk-size 32M \
-  --vfs-read-chunk-size-limit 128M \
-  --buffer-size 32M \
+  --vfs-read-chunk-size 64M \
+  --vfs-read-chunk-size-limit off \
+  --buffer-size 256M \
   --log-file /config/rclone.log \
   --log-level INFO &
 

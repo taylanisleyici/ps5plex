@@ -71,7 +71,20 @@ def main():
     assert origin_language("United States, Hong Kong") == "en"
     assert origin_language(None) is None
 
-    print("ok — 19 assertions")
+    # on a ~45 Mbps link, a 30 GB remux of a 2h film (~33 Mbps) must lose to an
+    # 8 GB encode (~9 Mbps) of the same quality tier
+    from rank import est_mbps
+    assert round(est_mbps(30 * 1024**3, 120)) == 36
+    assert score("Film.2024.1080p.BluRay.x264-GRP.mkv", 8 * 1024**3, "en", runtime_min=120) > \
+           score("Film.2024.1080p.BluRay.x264-GRP.mkv", 30 * 1024**3, "en", runtime_min=120)
+    # without a runtime nothing changes, so the librarian's calls keep working
+    assert score("Film.2024.1080p.BluRay.x264-GRP.mkv", 30 * 1024**3, "en") is not None
+
+    # a 100 MB "1080p" file for a 2h film is a sample, not a release
+    assert score("Film.2024.1080p.x264-GRP.mkv", 100 * 1024**2, "en", runtime_min=120) < \
+           score("Film.2024.720p.x264-GRP.mkv", 3 * 1024**3, "en", runtime_min=120)
+
+    print("ok — 23 assertions")
 
 
 if __name__ == "__main__":

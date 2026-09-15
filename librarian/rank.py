@@ -87,7 +87,20 @@ def is_banned(name):
     return bool(tokens(name) & set(BANNED))
 
 
-def score(name, size_bytes=0, origin=None, context=""):
+# What the link between this Mac and Real-Debrid can sustain. Measured at ~64 Mbps
+# raw and ~46 Mbps through the mount over Wi-Fi; a transcode needs input at its
+# own speed, and the PS5's buffer forgives nothing, so stay well under it.
+LINK_MBPS = float(__import__("os").environ.get("LINK_MBPS", "45"))
+
+
+def est_mbps(size_bytes, runtime_min):
+    """Average bitrate a release will demand, from its size and the title's runtime."""
+    if not size_bytes or not runtime_min:
+        return None
+    return size_bytes * 8 / (float(runtime_min) * 60) / 1e6
+
+
+def score(name, size_bytes=0, origin=None, context="", runtime_min=None):
     """Higher is better. None means the release must never be used.
 
     `origin` is the title's original language (see origin_language); when known,
@@ -161,6 +174,17 @@ def score(name, size_bytes=0, origin=None, context=""):
     elif any(m in toks or m in flat for m in SOFTSUB_MARKERS):
         points -= 5
 
-    # Mild nudge towards the larger of two otherwise-equal releases.
-    points += min(size_bytes / (1024 ** 3), 20) * 0.5
+    # Bigger is not better on a link this size. A 30 GB remux is ~32 Mbps and
+    # buffered to death; a 10 GB encode of the same film is ~11 Mbps and played.
+    mbps = est_mbps(size_bytes, runtime_min)
+    if mbps is None:
+        points += min(size_bytes / (1024 ** 3), 20) * 0.5     # no runtime: old nudge
+    elif mbps < 1.5:
+        points -= 100         # a "1080p" feature at 0.1 GB is a sample or the wrong title
+    elif mbps > LINK_MBPS * 0.6:
+        points -= 80          # will buffer: no headroom for the PS5 or a transcode
+    elif mbps > LINK_MBPS * 0.35:
+        points -= 20          # marginal
+    else:
+        points += 10          # comfortable
     return points

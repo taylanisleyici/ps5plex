@@ -28,10 +28,12 @@ mkdir -p /library
       # Tell Plex to look, so it appears without waiting for a scheduled scan.
       # Section ids are discovered, not hardcoded: they change if a library is
       # ever deleted and recreated.
-      for s in $(curl -sS --max-time 15 "http://localhost:32400/library/sections" 2>/dev/null \
-                 | grep -oE 'key="[0-9]+"' | grep -oE '[0-9]+'); do
+      AUTH=""
+      [ -n "${PLEX_TOKEN:-}" ] && AUTH="?X-Plex-Token=${PLEX_TOKEN}"
+      for s in $(curl -sS --max-time 15 "http://localhost:32400/library/sections${AUTH}" \
+                 2>/dev/null | grep -oE 'key="[0-9]+"' | grep -oE '[0-9]+'); do
         curl -sS -o /dev/null --max-time 20 \
-          "http://localhost:32400/library/sections/$s/refresh" 2>/dev/null || true
+          "http://localhost:32400/library/sections/$s/refresh${AUTH}" 2>/dev/null || true
       done
     fi
     sleep 5

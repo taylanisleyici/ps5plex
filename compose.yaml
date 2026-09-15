@@ -78,6 +78,7 @@ services:
       SCRAPER_URL: ${SCRAPER_URL:-}
       WATCHLIST_INTERVAL: ${WATCHLIST_INTERVAL:-120}
       # Off by default: pick sources yourself at http://localhost:8081
+      SUBS_DIR: /state/subs
       AUTO_FETCH: ${AUTO_FETCH:-0}
       MAX_PER_TITLE: ${MAX_PER_TITLE:-3}
     ports:

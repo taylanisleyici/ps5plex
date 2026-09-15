@@ -63,12 +63,26 @@ Nothing runs in the background. You start it when you want to watch something an
 
 ## Choosing what to watch
 
-Open **http://localhost:8099** — it lists your Plex Watchlist, and for each title
+Open **http://localhost:8099** on this Mac, or **http://192.168.3.20:8099** from
+your phone — it is on your LAN already, nothing extra to host.
+
+It lists your Plex Watchlist, and for each title
 every available release, ranked best-first, with size and whether Real-Debrid
 already has it cached. Click one and only that one is added. Like Stremio's
 stream list, and nothing is fetched behind your back.
 
 The same page lists what is currently in your library, with a remove button.
+
+Each title also has a **subtitles** button. It lists what OpenSubtitles has,
+Turkish first then English, from the same `subs5.strem.io` addon your Stremio
+already uses — no API key. Picking one saves it as a sidecar file next to the
+video, `Backrooms (2026).tur.srt` beside `Backrooms (2026).mkv`, which Plex reads
+as a selectable track.
+
+Sidecar files are deliberate. Subtitles embedded in a release are often the wrong
+version, and image-based ones (PGS) cannot be rendered by the PS5 client at all —
+Plex has to burn those into the picture, which turns a free direct stream into a
+full transcode. A plain `.srt` is the cheapest thing for the PS5 to handle.
 
 Automatic fetching still exists but is **off by default**. `AUTO_FETCH=1` turns it
 on and `MAX_PER_TITLE` caps it, because the first version quietly pulled 17

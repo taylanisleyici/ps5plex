@@ -30,6 +30,7 @@ SOURCE = pathlib.Path(os.environ.get("LIBRARIAN_SOURCE", "/media"))
 TARGET = pathlib.Path(os.environ.get("LIBRARIAN_TARGET", "/library"))
 OVERRIDES_FILE = pathlib.Path(os.environ.get("LIBRARIAN_OVERRIDES", "/etc/ps5plex/overrides.yml"))
 STATE = pathlib.Path(os.environ.get("PS5PLEX_STATE", "/state/managed.json"))
+SUBS_DIR = pathlib.Path(os.environ.get("SUBS_DIR", "/state/subs"))
 
 
 def load_managed():
@@ -85,6 +86,29 @@ def link(src, dst):
         return False
     dst.symlink_to(src)
     return True
+
+
+def place_subtitles(imdb, dst, season=None, episode=None):
+    """Copy any downloaded subtitles next to the video file.
+
+    Plex reads "Name.tur.srt" sitting beside "Name.mkv" as a selectable Turkish
+    track. A sidecar file is far more reliable than whatever a release embedded,
+    and the PS5 client handles it better than image-based subtitles.
+    """
+    if not SUBS_DIR.exists():
+        return 0
+    tag = f".s{int(season):02d}e{int(episode):02d}" if season and episode else ""
+    placed = 0
+    for src in SUBS_DIR.glob(f"{imdb}{tag}.*.srt"):
+        lang = src.name[:-len(".srt")].rsplit(".", 1)[-1]
+        target = dst.with_suffix("").with_suffix(f".{lang}.srt")
+        try:
+            if not target.exists() or target.read_bytes() != src.read_bytes():
+                target.write_bytes(src.read_bytes())
+            placed += 1
+        except OSError:
+            continue
+    return placed
 
 
 def plan_movie(info, files):
@@ -143,9 +167,14 @@ def main():
                 counts["skipped"] += 1
                 continue
             counts["series"] += 1
+            imdb = managed[folder.name].get("imdb")
             for src, dst in pairs:
                 wanted.add(dst)
                 created += link(src, dst)
+                if imdb:
+                    parsed = guessit(dst.name, {"type": "episode"})
+                    place_subtitles(imdb, dst, _first(parsed.get("season")),
+                                    _first(parsed.get("episode")))
             continue
 
         # Movies compete: several torrents can be the same film in different
@@ -163,11 +192,12 @@ def main():
         if best is None or points > best[0]:
             if best is not None:
                 counts["losers"] += 1
-            movies[key] = (points, info, files)
+            movies[key] = (points, info, files, managed[folder.name].get("imdb"))
         else:
             counts["losers"] += 1
 
-    for points, info, files in movies.values():
+    subs_placed = 0
+    for points, info, files, imdb in movies.values():
         pairs = plan_movie(info, files)
         if not pairs:
             counts["skipped"] += 1
@@ -176,10 +206,14 @@ def main():
         for src, dst in pairs:
             wanted.add(dst)
             created += link(src, dst)
+            if imdb:
+                subs_placed += place_subtitles(imdb, dst)
 
     # Drop links for torrents that are gone from Real-Debrid.
     removed = 0
     for path in TARGET.rglob("*"):
+        if path.suffix == ".srt":
+            continue                      # sidecars, placed not linked
         if path.is_symlink() and path not in wanted:
             path.unlink()
             removed += 1
@@ -192,7 +226,8 @@ def main():
           f"-{removed} stale)"
           + (f" | dropped {counts['junk']} cam/screener" if counts["junk"] else "")
           + (f", {counts['losers']} worse duplicates" if counts["losers"] else "")
-          + (f", {counts['skipped']} unusable" if counts["skipped"] else ""))
+          + (f", {counts['skipped']} unusable" if counts["skipped"] else "")
+          + (f" | {subs_placed} subtitle file(s)" if subs_placed else ""))
 
 
 if __name__ == "__main__":

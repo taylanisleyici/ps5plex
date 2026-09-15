@@ -12,6 +12,7 @@ capped by MAX_PER_TITLE so a long-running series cannot pull a back catalogue.
 import html
 import json
 import os
+import pathlib
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -21,6 +22,12 @@ import poller
 from rank import is_banned, score
 
 PORT = int(os.environ.get("PICKER_PORT", "8081"))
+SUBS_DIR = pathlib.Path(os.environ.get("SUBS_DIR", "/state/subs"))
+# Stremio's OpenSubtitles addon — no API key, and it is the same source your
+# Stremio already uses.
+SUBS_API = "https://opensubtitles-v3.strem.io"
+# Turkish first, English as the fallback.
+PREFERRED_LANGS = ("tur", "eng")
 
 CSS = """
 body{font:15px system-ui;margin:0;background:#141414;color:#e8e8e8}
@@ -72,6 +79,36 @@ def candidates(kind, imdb, season=None, episode=None):
                     "junk": pts is None or is_banned(release) or is_banned(context)})
     out.sort(key=lambda c: (-1e9 if c["score"] is None else -c["score"]))
     return out
+
+
+def subtitles(kind, imdb, season=None, episode=None):
+    """Available subtitles, preferred languages first."""
+    if kind == "show":
+        url = f"{SUBS_API}/subtitles/series/{imdb}:{season or 1}:{episode or 1}.json"
+    else:
+        url = f"{SUBS_API}/subtitles/movie/{imdb}.json"
+    r = requests.get(url, timeout=45, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    subs = [s for s in r.json().get("subtitles", []) if s.get("url")]
+    def rank(s):
+        lang = s.get("lang", "")
+        return (PREFERRED_LANGS.index(lang) if lang in PREFERRED_LANGS else 99, lang)
+    return sorted(subs, key=rank)
+
+
+def sub_path(imdb, lang, season=None, episode=None):
+    """Where a downloaded subtitle lives until the librarian places it."""
+    tag = f".s{int(season):02d}e{int(episode):02d}" if season and episode else ""
+    return SUBS_DIR / f"{imdb}{tag}.{lang}.srt"
+
+
+def save_subtitle(url, imdb, lang, season=None, episode=None):
+    r = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    SUBS_DIR.mkdir(parents=True, exist_ok=True)
+    path = sub_path(imdb, lang, season, episode)
+    path.write_bytes(r.content)
+    return path
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -131,7 +168,10 @@ class Handler(BaseHTTPRequestHandler):
         if not imdb:
             return self._send(page("error", "<p>No IMDb id.</p>"), 400)
 
-        head = f"<h3>{html.escape(title)}</h3>"
+        subs_link = (f"/subs?kind={kind}&imdb={imdb}&title={urllib.parse.quote(title)}"
+                     f"&season={season}&episode={episode}")
+        head = (f"<h3>{html.escape(title)}</h3>"
+                f"<p><a href='{subs_link}'><button class='sec'>subtitles</button></a></p>")
         if kind == "show":
             schedule = poller.aired_episodes(imdb)
             seasons = " ".join(
@@ -168,6 +208,36 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(page(title, head + (
             "".join(rows) or "<p class='meta'>No releases found.</p>")))
 
+    def subs(self, q):
+        kind = q.get("kind", ["movie"])[0]
+        imdb = q.get("imdb", [""])[0]
+        title = q.get("title", ["?"])[0]
+        season = q.get("season", [""])[0]
+        episode = q.get("episode", [""])[0]
+        season = int(season) if season else None
+        episode = int(episode) if episode else None
+
+        have = {p.name for p in SUBS_DIR.glob(f"{imdb}*.srt")} if SUBS_DIR.exists() else set()
+        rows = []
+        for s in subtitles(kind, imdb, season, episode)[:40]:
+            lang = s.get("lang", "?")
+            target = sub_path(imdb, lang, season, episode).name
+            mark = " &middot; <b>saved</b>" if target in have else ""
+            rows.append(
+                f"<div class='item'><div class='row'><div><b>{html.escape(lang)}</b>"
+                f"<span class='meta'>{mark} &middot; {html.escape(s.get('id','')[:40])}</span></div>"
+                f"<form method='post' action='/addsub'>"
+                f"<input type='hidden' name='url' value='{html.escape(s['url'])}'>"
+                f"<input type='hidden' name='imdb' value='{imdb}'>"
+                f"<input type='hidden' name='lang' value='{html.escape(lang)}'>"
+                f"<input type='hidden' name='season' value='{season or ''}'>"
+                f"<input type='hidden' name='episode' value='{episode or ''}'>"
+                f"<button>use this</button></form></div></div>")
+        note = ("<p class='meta'>Saved subtitles are placed next to the video file, so "
+                "Plex offers them as a selectable track on the PS5.</p>")
+        return self._send(page(f"subtitles — {title}", note + ("".join(rows) or
+                          "<p class='meta'>None found.</p>")))
+
     # ---- actions --------------------------------------------------------
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -180,6 +250,14 @@ class Handler(BaseHTTPRequestHandler):
             poller._add_and_record(
                 (0, form["hash"][0], form["hash"][0]), form["title"][0], form["imdb"][0],
                 "", form["kind"][0], managed, season)
+            return self._redirect("/")
+
+        if self.path == "/addsub":
+            season = form.get("season", [""])[0]
+            episode = form.get("episode", [""])[0]
+            save_subtitle(form["url"][0], form["imdb"][0], form["lang"][0],
+                          int(season) if season else None,
+                          int(episode) if episode else None)
             return self._redirect("/")
 
         if self.path == "/remove":
@@ -197,6 +275,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(self.home())
             if parsed.path == "/pick":
                 return self.pick(urllib.parse.parse_qs(parsed.query))
+            if parsed.path == "/subs":
+                return self.subs(urllib.parse.parse_qs(parsed.query))
         except Exception as e:
             return self._send(page("error", f"<pre>{html.escape(str(e))}</pre>"), 500)
         self.send_error(404)

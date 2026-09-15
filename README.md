@@ -240,22 +240,21 @@ than Original/Maximum, the console *asks* for a transcode and the server obliges
 — the log shows the client requesting `directPlay=0&directStream=0`. Set Video
 Quality to **Original** in the PS5 Plex app.
 
-**Plex thinking the console is remote.** Traffic arrives through Docker's gateway
-rather than the LAN, so Plex labels it `(Allowed Network (WAN))` and applies
-remote quality limits. `LanNetworksBandwidth` fixes that, but Plex silently drops
-it when set through the API — it only persists when written to Preferences.xml
-while the server is stopped:
+**Plex thinking the console is remote.** Plex decides "local" one way only: is
+the client on the same subnet as one of its own interfaces? Inside Docker its
+interface is `172.x`, and every outside client arrives NAT'd from Docker's gateway
+`192.168.65.1` — so Plex logs the PS5 as `(Allowed Network (WAN))` and, since
+April 2026, refuses to play without a paid Remote Watch Pass. There is no setting
+for this; the old "LAN Networks" preference (`LanNetworksBandwidth`) was removed
+from the server and writing it does nothing.
 
-```
-docker compose stop plex
-docker run --rm -i -v ps5plex_plex-config:/config python:3-slim python3 - <<'EOF'
-import xml.etree.ElementTree as ET, pathlib
-p = pathlib.Path("/config/Library/Application Support/Plex Media Server/Preferences.xml")
-t = ET.parse(p); t.getroot().set("LanNetworksBandwidth", "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12")
-t.write(p, encoding="utf-8", xml_declaration=True)
-EOF
-docker compose up -d plex
-```
+`docker/loopback-proxy.sh` solves it at the source: the published port lands on a
+`socat` relay inside the Plex container, which forwards over loopback. Plex sees
+`127.0.0.1`, logs `(Loopback)`, and treats every client as local. It is a layer-4
+relay, so TLS still terminates in Plex and the `plex.direct` certificate keeps
+working. The relay must not use port 32401 — Plex binds `127.0.0.1:32401` for an
+internal service, and a relay there makes every Plex start fail with
+`Error binding acceptor: Address in use`.
 
 Transcode scratch must stay on **disk**, never tmpfs. A 6 GB RAM disk was enough
 for a high-bitrate transcode to fill, after which the kernel SIGKILLed the

@@ -64,7 +64,9 @@ services:
       - ./config/rclone.conf:/etc/rclone/rclone.conf:ro
       - ./config/overrides.yml:/etc/ps5plex/overrides.yml:ro
     ports:
-      - "32400:32400"
+      # Lands on the loopback relay (see docker/loopback-proxy.sh), not on Plex
+      # directly, so Plex sees clients as local rather than "(WAN)".
+      - "32400:33400"
 
   picker:
     build:

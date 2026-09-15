@@ -241,17 +241,31 @@ def best_release(kind, imdb, origin=None):
 
 
 def add_to_rd(info_hash):
-    magnet = f"magnet:?xt=urn:btih:{info_hash}"
-    r = requests.post(f"{RD}/torrents/addMagnet",
-                      headers={"Authorization": f"Bearer {RD_TOKEN}"},
-                      data={"magnet": magnet}, timeout=30)
+    """Add a magnet and select its files.
+
+    Real-Debrid converts the magnet before it will accept a file selection, and
+    calling selectFiles too early answers 404 rather than "not ready". So wait
+    for the torrent to reach a state where selection is meaningful.
+    """
+    head = {"Authorization": f"Bearer {RD_TOKEN}"}
+    r = requests.post(f"{RD}/torrents/addMagnet", headers=head,
+                      data={"magnet": f"magnet:?xt=urn:btih:{info_hash}"}, timeout=30)
     r.raise_for_status()
     tid = r.json()["id"]
-    # Selecting all files is what actually starts the caching.
-    requests.post(f"{RD}/torrents/selectFiles/{tid}",
-                  headers={"Authorization": f"Bearer {RD_TOKEN}"},
-                  data={"files": "all"}, timeout=30).raise_for_status()
-    return tid
+
+    for attempt in range(20):
+        info = requests.get(f"{RD}/torrents/info/{tid}", headers=head, timeout=30).json()
+        status = info.get("status", "")
+        if status == "waiting_files_selection":
+            requests.post(f"{RD}/torrents/selectFiles/{tid}", headers=head,
+                          data={"files": "all"}, timeout=30).raise_for_status()
+            return tid
+        if status in ("downloaded", "downloading", "queued", "compressing", "uploading"):
+            return tid            # already past selection
+        if status in ("magnet_error", "error", "virus", "dead"):
+            raise RuntimeError(f"Real-Debrid rejected this release: {status}")
+        time.sleep(1.5)           # magnet_conversion
+    raise RuntimeError("Real-Debrid did not finish converting the magnet in time")
 
 
 def prune(managed, on_watchlist):

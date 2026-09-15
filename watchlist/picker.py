@@ -243,7 +243,16 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         form = urllib.parse.parse_qs(self.rfile.read(length).decode())
         managed = poller.load_managed()
+        try:
+            return self._post(form, managed)
+        except Exception as e:
+            # Show what went wrong instead of dropping the connection.
+            return self._send(page("could not add", (
+                f"<p><b>{html.escape(type(e).__name__)}</b></p>"
+                f"<pre>{html.escape(str(e))[:600]}</pre>"
+                f"<p><a href='/'>back</a></p>")), 500)
 
+    def _post(self, form, managed):
         if self.path == "/add":
             season = form.get("season", [""])[0]
             season = int(season) if season else None

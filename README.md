@@ -76,6 +76,12 @@ Nothing runs in the background. You start it when you want to watch something an
 Open **http://localhost:8099** on this Mac, or **http://192.168.3.20:8099** from
 your phone — it is on your LAN already, nothing extra to host.
 
+Releases already cached at Real-Debrid are listed **first** and marked
+"⚡ plays now" — they start immediately. Anything else is marked "must download"
+and has to be fetched first, which can take minutes just to resolve the magnet.
+That ordering beats picture quality on purpose: waiting is worse than a slightly
+smaller file.
+
 It lists your Plex Watchlist, and for each title
 every available release, ranked best-first, with size and whether Real-Debrid
 already has it cached. Click one and only that one is added. Like Stremio's

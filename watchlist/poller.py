@@ -241,31 +241,60 @@ def best_release(kind, imdb, origin=None):
 
 
 def add_to_rd(info_hash):
-    """Add a magnet and select its files.
+    """Add a magnet. Does not wait for Real-Debrid to finish with it.
 
-    Real-Debrid converts the magnet before it will accept a file selection, and
-    calling selectFiles too early answers 404 rather than "not ready". So wait
-    for the torrent to reach a state where selection is meaningful.
+    An uncached torrent sits in `magnet_conversion` while Real-Debrid fetches its
+    metadata from the swarm, which can take minutes. Blocking on that made the
+    picker time out and leave half-added torrents behind, so we add, give it a
+    few seconds in case it is already cached, and let reconcile() finish the job.
     """
     head = {"Authorization": f"Bearer {RD_TOKEN}"}
     r = requests.post(f"{RD}/torrents/addMagnet", headers=head,
                       data={"magnet": f"magnet:?xt=urn:btih:{info_hash}"}, timeout=30)
     r.raise_for_status()
     tid = r.json()["id"]
+    for _ in range(4):                    # a cached release is ready almost at once
+        if _select_if_ready(tid, head):
+            break
+        time.sleep(1.5)
+    return tid
 
-    for attempt in range(20):
+
+def _select_if_ready(tid, head=None):
+    """Select all files once Real-Debrid will accept it. True when nothing is left to do."""
+    head = head or {"Authorization": f"Bearer {RD_TOKEN}"}
+    try:
         info = requests.get(f"{RD}/torrents/info/{tid}", headers=head, timeout=30).json()
-        status = info.get("status", "")
-        if status == "waiting_files_selection":
+    except Exception:
+        return False
+    status = info.get("status", "")
+    if status == "waiting_files_selection":
+        try:
             requests.post(f"{RD}/torrents/selectFiles/{tid}", headers=head,
                           data={"files": "all"}, timeout=30).raise_for_status()
-            return tid
-        if status in ("downloaded", "downloading", "queued", "compressing", "uploading"):
-            return tid            # already past selection
-        if status in ("magnet_error", "error", "virus", "dead"):
-            raise RuntimeError(f"Real-Debrid rejected this release: {status}")
-        time.sleep(1.5)           # magnet_conversion
-    raise RuntimeError("Real-Debrid did not finish converting the magnet in time")
+            return True
+        except Exception:
+            return False
+    return status in ("downloaded", "downloading", "queued", "compressing", "uploading")
+
+
+def reconcile():
+    """Finish off torrents Real-Debrid was still converting when they were added,
+    and drop ones it could not resolve at all."""
+    head = {"Authorization": f"Bearer {RD_TOKEN}"}
+    try:
+        torrents = requests.get(f"{RD}/torrents", params={"limit": 200},
+                                headers=head, timeout=30).json()
+    except Exception:
+        return
+    for t in torrents:
+        status = t.get("status", "")
+        if status == "waiting_files_selection":
+            if _select_if_ready(t["id"], head):
+                print(f"[picker] selected files for {t.get('filename','?')[:50]}", flush=True)
+        elif status in ("magnet_error", "error", "virus", "dead"):
+            requests.delete(f"{RD}/torrents/delete/{t['id']}", headers=head, timeout=30)
+            print(f"[picker] removed unusable torrent ({status})", flush=True)
 
 
 def prune(managed, on_watchlist):

@@ -4,6 +4,11 @@ Add a title to your Watchlist — from the PS5 Plex app, your phone, anywhere �
 and this puts a good release into Real-Debrid. zurg exposes it, the librarian
 files it, Plex shows it. Couch to playable without touching the Mac.
 
+Only what you ask for ends up in Plex. A Real-Debrid account accumulates years of
+already-watched torrents, and mirroring all of it into a library is both useless
+and a good way to get rate-limited. Everything this fetches is recorded in
+state/managed.json, and the librarian links nothing else.
+
 Plex's Watchlist *RSS feed* is a Plex Pass feature, but the underlying
 discover.provider.plex.tv API works for any signed-in account, which is the one
 this reads.
@@ -11,6 +16,7 @@ this reads.
 Runs only while the stack is up, and dies with it like everything else here.
 """
 import os
+import pathlib
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -25,6 +31,8 @@ RD_TOKEN = os.environ.get("RD_TOKEN", "").strip()
 # /stream/{type}/{imdb}.json shape, so paste whichever you already use.
 SCRAPER = os.environ.get("SCRAPER_URL", "").strip().rstrip("/")
 INTERVAL = int(os.environ.get("WATCHLIST_INTERVAL", "120"))
+
+STATE = os.environ.get("PS5PLEX_STATE", "/state/managed.json")
 
 DISCOVER = "https://discover.provider.plex.tv"
 RD = "https://api.real-debrid.com/rest/1.0"
@@ -57,6 +65,30 @@ def imdb_id(rating_key):
         if gid.startswith("imdb://"):
             return gid.split("://", 1)[1]
     return None
+
+
+def load_managed():
+    """Which Real-Debrid folders this project put there, and for what."""
+    import json
+    try:
+        return json.loads(pathlib.Path(STATE).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_managed(managed):
+    import json
+    path = pathlib.Path(STATE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(managed, indent=2, ensure_ascii=False))
+
+
+def rd_torrents():
+    """id, filename and hash for everything in the account."""
+    r = requests.get(f"{RD}/torrents", params={"limit": 200},
+                     headers={"Authorization": f"Bearer {RD_TOKEN}"}, timeout=30)
+    r.raise_for_status()
+    return r.json()
 
 
 def rd_existing_names():
@@ -114,27 +146,54 @@ def add_to_rd(info_hash):
     return tid
 
 
-def pass_once(seen):
-    existing = rd_existing_names()
+def pass_once():
+    """One sweep: anything on the watchlist we have not already handled."""
+    managed = load_managed()
+    handled = {v.get("ratingKey") for v in managed.values()}
+    torrents = None
+
     for kind, title, key in watchlist():
-        if key in seen:
+        if key in handled:
             continue
+
         imdb = imdb_id(key)
         if not imdb:
             print(f"[watchlist] {title}: no IMDb id, skipping")
-            seen.add(key)
             continue
-        if any(title.lower() in name for name in existing):
-            seen.add(key)
+
+        if kind == "show":
+            # Series need per-episode scraping (Comet expects tt123:1:1), which
+            # is not written yet. Say so rather than failing quietly.
+            print(f"[watchlist] {title}: series are not supported yet, skipping")
             continue
+
+        # It may already be in the account from before — adopt it rather than
+        # fetching a second copy.
+        if torrents is None:
+            torrents = rd_torrents()
+        already = next((t for t in torrents
+                        if title.lower() in (t.get("filename") or "").lower()), None)
+        if already:
+            managed[already["filename"]] = {"title": title, "imdb": imdb,
+                                            "kind": kind, "ratingKey": key}
+            save_managed(managed)
+            print(f"[watchlist] {title}: already in Real-Debrid, added to your library")
+            continue
+
         found = best_release(kind, imdb)
         if not found:
-            print(f"[watchlist] {title}: nothing usable found (all junk or no results)")
+            print(f"[watchlist] {title}: nothing usable found (all junk, or no results)")
             continue
+
         points, name, info_hash = found
-        add_to_rd(info_hash)
-        seen.add(key)
-        print(f"[watchlist] added {title} -> {name[:70]} (score {points:.0f})")
+        tid = add_to_rd(info_hash)
+        info = requests.get(f"{RD}/torrents/info/{tid}",
+                            headers={"Authorization": f"Bearer {RD_TOKEN}"},
+                            timeout=30).json()
+        folder = info.get("filename") or name
+        managed[folder] = {"title": title, "imdb": imdb, "kind": kind, "ratingKey": key}
+        save_managed(managed)
+        print(f"[watchlist] added {title} -> {name[:66]} (score {points:.0f})")
 
 
 def main():
@@ -143,10 +202,9 @@ def main():
     if missing:
         sys.exit(f"[watchlist] not configured: {', '.join(missing)} — see .env.example")
     print(f"[watchlist] watching your Plex Watchlist every {INTERVAL}s")
-    seen = set()
     while True:
         try:
-            pass_once(seen)
+            pass_once()
         except Exception as e:                       # a flaky scraper must not kill the loop
             print(f"[watchlist] pass failed: {type(e).__name__}: {e}")
         time.sleep(INTERVAL)

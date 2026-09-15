@@ -1,5 +1,9 @@
 """Build a Plex-shaped symlink tree over the flat Real-Debrid mount.
 
+Only what the watchlist robot fetched is linked. A Real-Debrid account is full of
+things you watched years ago; a library of all of it is noise, and walking it
+costs API calls. state/managed.json is the list, written by watchlist/poller.py.
+
 zurg exposes one folder per torrent, named after the release. Plex copes badly
 with that: its movie scanner treats every video file in a folder as a separate
 movie (so a 120 MB featurette can win over the feature), and its TV scanner wants
@@ -13,6 +17,7 @@ So we read the mount, classify each release, and lay out symlinks:
 Symlinks cost nothing and download nothing — they point back into the FUSE mount,
 which streams on demand. Plex only ever sees clean, unambiguous names.
 """
+import json
 import os
 import pathlib
 import sys
@@ -24,6 +29,15 @@ from rank import score
 SOURCE = pathlib.Path(os.environ.get("LIBRARIAN_SOURCE", "/media/__all__"))
 TARGET = pathlib.Path(os.environ.get("LIBRARIAN_TARGET", "/library"))
 OVERRIDES_FILE = pathlib.Path(os.environ.get("LIBRARIAN_OVERRIDES", "/etc/ps5plex/overrides.yml"))
+STATE = pathlib.Path(os.environ.get("PS5PLEX_STATE", "/state/managed.json"))
+
+
+def load_managed():
+    """Folder names the watchlist robot asked for. Nothing else gets linked."""
+    try:
+        return json.loads(STATE.read_text())
+    except (OSError, ValueError):
+        return {}
 
 
 def load_overrides():
@@ -104,15 +118,18 @@ def plan_series(info, files):
 
 def main():
     overrides = load_overrides()
+    managed = load_managed()
     if not SOURCE.exists():
         sys.exit(f"[librarian] source {SOURCE} is missing — is the mount up?")
+    if not managed:
+        print("[librarian] nothing requested yet — add something to your Plex Watchlist")
 
     wanted, created = set(), 0
     counts = {"movie": 0, "series": 0, "skipped": 0, "junk": 0, "losers": 0}
     movies = {}          # (title, year) -> best candidate so far
 
     for folder in sorted(SOURCE.iterdir()):
-        if not folder.is_dir():
+        if not folder.is_dir() or folder.name not in managed:
             continue
         kind, info = classify(folder.name, overrides)
         files = video_files(folder)
@@ -170,10 +187,12 @@ def main():
         if path.is_dir() and not any(path.iterdir()):
             path.rmdir()
 
-    print(f"[librarian] {counts['movie']} movies, {counts['series']} series "
-          f"({len(wanted)} links: +{created} new, -{removed} stale) | "
-          f"dropped {counts['junk']} cam/screener, {counts['losers']} lower-quality "
-          f"duplicates, {counts['skipped']} unusable")
+    print(f"[librarian] {counts['movie']} movies, {counts['series']} series from "
+          f"{len(managed)} requested ({len(wanted)} links: +{created} new, "
+          f"-{removed} stale)"
+          + (f" | dropped {counts['junk']} cam/screener" if counts["junk"] else "")
+          + (f", {counts['losers']} worse duplicates" if counts["losers"] else "")
+          + (f", {counts['skipped']} unusable" if counts["skipped"] else ""))
 
 
 if __name__ == "__main__":

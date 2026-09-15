@@ -6,6 +6,12 @@ Watch your Real-Debrid library on the PS5, served from this Mac.
 Real-Debrid --> zurg (WebDAV) --> rclone mount --> librarian --> Plex --> PS5
 ```
 
+**Your Plex library contains only what you put on your Watchlist.** A Real-Debrid
+account collects years of already-watched torrents; mirroring all of it into Plex
+is noise, and walking it costs API calls you will regret. The watchlist robot
+records everything it fetches in `state/managed.json`, and the librarian links
+nothing else.
+
 zurg serves every torrent as a flat folder named after the release. The
 **librarian** reads those names, works out what each one actually is, and builds
 a symlink tree Plex can read cleanly:
@@ -78,7 +84,19 @@ browser, so Comet or MediaFusion work better here.
 What it does each pass: read the Watchlist, resolve each title to an IMDb id, ask
 the scraper what exists, score the candidates with the same `rank.py` the
 librarian uses, and send the winner to Real-Debrid. Camera rips are never
-selected, whatever their claimed resolution.
+selected, whatever their claimed resolution. If the title is already in your
+Real-Debrid account it is adopted rather than fetched again.
+
+Series are not supported yet — Comet wants per-episode ids (`tt123:1:1`) and that
+lookup is unwritten. The poller says so and skips them rather than failing
+silently.
+
+### Rate limits
+
+Real-Debrid limits its API hard, and an over-eager client gets refused on
+`api.real-debrid.com` while `real-debrid.com` keeps serving normally — which
+looks exactly like a network fault and is not one. `./scripts/rd-check.sh` tells
+the two apart. If it says rate-limited: wait, don't restart the stack.
 
 ## Daily use
 

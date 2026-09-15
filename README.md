@@ -230,6 +230,37 @@ Run `python3 librarian/test_classify.py` to check the rules still hold.
 hardware transcoding here (that's a Plex Pass feature), so software transcoding is
 the entire budget — give it 10+ cores.
 
+## If the PS5 transcodes something it should direct play
+
+Check Plex -> Settings -> Status -> Now Playing. Two causes, both outside the
+file itself:
+
+**The PS5 app's own quality setting.** If it is set to a fixed bitrate rather
+than Original/Maximum, the console *asks* for a transcode and the server obliges
+— the log shows the client requesting `directPlay=0&directStream=0`. Set Video
+Quality to **Original** in the PS5 Plex app.
+
+**Plex thinking the console is remote.** Traffic arrives through Docker's gateway
+rather than the LAN, so Plex labels it `(Allowed Network (WAN))` and applies
+remote quality limits. `LanNetworksBandwidth` fixes that, but Plex silently drops
+it when set through the API — it only persists when written to Preferences.xml
+while the server is stopped:
+
+```
+docker compose stop plex
+docker run --rm -i -v ps5plex_plex-config:/config python:3-slim python3 - <<'EOF'
+import xml.etree.ElementTree as ET, pathlib
+p = pathlib.Path("/config/Library/Application Support/Plex Media Server/Preferences.xml")
+t = ET.parse(p); t.getroot().set("LanNetworksBandwidth", "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12")
+t.write(p, encoding="utf-8", xml_declaration=True)
+EOF
+docker compose up -d plex
+```
+
+Transcode scratch must stay on **disk**, never tmpfs. A 6 GB RAM disk was enough
+for a high-bitrate transcode to fill, after which the kernel SIGKILLed the
+transcoder and playback died with "Playback error".
+
 ## Codecs: why the library prefers 1080p x264
 
 The PS5 decodes 4K HEVC fine — it plays 4K UHD Blu-rays. But **Plex's PS5 profile

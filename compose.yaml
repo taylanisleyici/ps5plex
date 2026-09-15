@@ -58,14 +58,13 @@ services:
       - plex-config:/config
       - plex-library:/library
       - ps5plex-state:/state
+      # On disk, not tmpfs: a 6 GB RAM disk got filled by a high-bitrate
+      # transcode and the kernel SIGKILLed the transcoder mid-playback.
+      - plex-transcode:/transcode
       - ./config/rclone.conf:/etc/rclone/rclone.conf:ro
       - ./config/overrides.yml:/etc/ps5plex/overrides.yml:ro
     ports:
       - "32400:32400"
-    tmpfs:
-      # Transcoding scratch space. There is 24 GB of RAM and only ~107 GB of free
-      # disk, so keep the churn in memory and leave nothing behind on exit.
-      - /transcode:size=6g
 
   picker:
     build:
@@ -92,5 +91,6 @@ services:
 
 volumes:
   plex-config:
+  plex-transcode:
   plex-library:
   ps5plex-state:

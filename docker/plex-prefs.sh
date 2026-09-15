@@ -18,6 +18,10 @@ wanted = {
     "allowedNetworks": "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12",
     "LanNetworksBandwidth": "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12",
     "TranscoderTempDirectory": "/transcode",
+    # Without this Plex calls the PS5 "WAN" — it arrives via Docker's gateway,
+    # not the LAN — and applies remote quality limits, forcing a transcode of a
+    # file the console could have played untouched.
+    "LanNetworksBandwidth": "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12",
     # These each read whole files off the Real-Debrid mount. Never do that.
     "GenerateBIFBehavior": "never",
     "GenerateChapterThumbBehavior": "never",

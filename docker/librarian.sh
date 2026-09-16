@@ -9,7 +9,7 @@ INTERVAL="${LIBRARIAN_INTERVAL:-120}"
 mkdir -p /library
 
 (
-  # Wait for the mount to carry content; zurg needs a moment to list the account.
+  # Wait for the mount to carry content; rdserve needs a moment to list the account.
   for _ in $(seq 1 30); do
     [ -d /media/__all__ ] && [ -n "$(ls -A /media/__all__ 2>/dev/null)" ] && break
     sleep 2

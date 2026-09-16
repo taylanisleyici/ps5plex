@@ -1,7 +1,7 @@
 """Watch the Plex Watchlist and fetch what appears on it.
 
 Add a title to your Watchlist — from the PS5 Plex app, your phone, anywhere —
-and this puts a good release into Real-Debrid. zurg exposes it, the librarian
+and this puts a good release into Real-Debrid. rdserve exposes it, the librarian
 files it, Plex shows it. Couch to playable without touching the Mac.
 
 Only what you ask for ends up in Plex. A Real-Debrid account accumulates years of

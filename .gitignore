@@ -4,3 +4,4 @@
 # runtime
 data/
 *.log
+__pycache__/

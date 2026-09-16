@@ -4,7 +4,7 @@ Only what the watchlist robot fetched is linked. A Real-Debrid account is full o
 things you watched years ago; a library of all of it is noise, and walking it
 costs API calls. state/managed.json is the list, written by watchlist/poller.py.
 
-zurg exposes one folder per torrent, named after the release. Plex copes badly
+rdserve exposes one folder per torrent, named after the release. Plex copes badly
 with that: its movie scanner treats every video file in a folder as a separate
 movie (so a 120 MB featurette can win over the feature), and its TV scanner wants
 Show/Season NN/... rather than a flat pile of episode files.

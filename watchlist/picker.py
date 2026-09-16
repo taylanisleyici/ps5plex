@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import requests
 
 import poller
-from rank import LINK_MBPS, est_mbps, is_banned, score
+from rank import est_mbps, is_banned, score
 
 PORT = int(os.environ.get("PICKER_PORT", "8081"))
 SUBS_DIR = pathlib.Path(os.environ.get("SUBS_DIR", "/state/subs"))
@@ -227,9 +227,7 @@ class Handler(BaseHTTPRequestHandler):
                      else "<span class='badge uncached'>must download</span>")
             meta = [gb(c["size"])]
             if c["mbps"]:
-                heavy = c["mbps"] > LINK_MBPS * 0.6
-                meta.append(f"<span class='badge {'junk' if heavy else 'uncached'}'>"
-                            f"~{c['mbps']:.0f} Mbps{' — will buffer on this link' if heavy else ''}</span>")
+                meta.append(f"~{c['mbps']:.0f} Mbps")
             if c["score"] is not None:
                 meta.append(f"score {c['score']:.0f}")
             rows.append(

@@ -13,7 +13,7 @@ one, find it with `ipconfig getifaddr en0` and update `PLEX_ADVERTISE_URL` in
 `.env`. A DHCP reservation on the router avoids the problem entirely.
 
 ```
-Real-Debrid --> zurg (WebDAV) --> rclone mount --> librarian --> Plex --> PS5
+Real-Debrid --> rdserve (HTTP) --> rclone mount --> librarian --> Plex --> PS5
 ```
 
 **Your Plex library contains only what you put on your Watchlist.** A Real-Debrid
@@ -22,7 +22,7 @@ is noise, and walking it costs API calls you will regret. The watchlist robot
 records everything it fetches in `state/managed.json`, and the librarian links
 nothing else.
 
-zurg serves every torrent as a flat folder named after the release. The
+rdserve serves every torrent as a flat folder named after the release. The
 **librarian** reads those names, works out what each one actually is, and builds
 a symlink tree Plex can read cleanly:
 
@@ -79,13 +79,12 @@ your phone — it is on your LAN already, nothing extra to host.
 Releases already cached at Real-Debrid are listed **first** and marked
 "⚡ plays now" — they start immediately. Anything else is marked "must download"
 and has to be fetched first, which can take minutes just to resolve the magnet.
-That ordering beats picture quality on purpose: waiting is worse than a slightly
-smaller file.
 
-It lists your Plex Watchlist, and for each title
-every available release, ranked best-first, with size and whether Real-Debrid
-already has it cached. Click one and only that one is added. Like Stremio's
-stream list, and nothing is fetched behind your back.
+It lists your Plex Watchlist, and for each title every available release, ranked
+best-first, with size, estimated bitrate and whether Real-Debrid already has it
+cached. The bitrate is information, not a filter: nothing is pushed down for
+being big, you decide what your link can carry. Click one and only that one is
+added. Like Stremio's stream list, and nothing is fetched behind your back.
 
 The same page lists what is currently in your library, with a remove button.
 
@@ -192,8 +191,8 @@ herring here; read the server log before chasing any of it.
 Docker's NAT every connection appears to come from the bridge gateway
 (`192.168.65.1`) rather than your LAN, so Plex locks you out of setup *and* would
 bill PS5 playback as *remote* — which since April 2026 needs a paid Plex Pass.
-`plex-prefs.sh` sets `allowedNetworks` and `LanNetworksBandwidth` to RFC1918 space
-on first boot to prevent both.
+`plex-prefs.sh` sets `allowedNetworks` to RFC1918 space on first boot for the
+setup lock-out; the loopback relay below handles the remote/local question.
 
 **Plex advertises an unreachable address.** Inside the container it only knows its
 `172.x` bridge IP. Set `PLEX_ADVERTISE_URL` in `.env` to this Mac's LAN address
@@ -260,23 +259,13 @@ Transcode scratch must stay on **disk**, never tmpfs. A 6 GB RAM disk was enough
 for a high-bitrate transcode to fill, after which the kernel SIGKILLed the
 transcoder and playback died with "Playback error".
 
-## The link is the ceiling
+## Every byte goes through this Mac
 
-Every byte goes Real-Debrid → this Mac → PS5. Plex clients only ever fetch from
-the Plex server; the PS5 cannot pull from Real-Debrid itself, however good its
-own connection is. So the Mac's internet link decides what plays:
-
-```
-Mac on Wi-Fi (en0)        ~64 Mbps raw, ~51 Mbps through the mount
-1080p x264 encode         ~10 Mbps   plays with room to spare
-1080p BluRay remux        ~32 Mbps   buffers, then the PS5 app gives up
-```
-
-**Plug the Mac into Ethernet.** That is the single biggest improvement available
-and costs nothing. Until then the picker estimates each release's bitrate from
-its size and the title's runtime, labels it, and pushes anything over ~60% of
-the link (`LINK_MBPS`, default 45) to the bottom. Change `LINK_MBPS` in `.env`
-after moving to Ethernet.
+Real-Debrid → this Mac → PS5. Plex clients only ever fetch from the Plex server;
+the PS5 cannot pull from Real-Debrid itself, however good its own connection is.
+So the Mac's internet link decides what plays smoothly. The picker shows each
+release's estimated bitrate (size ÷ runtime) next to its size so you can judge
+that yourself; it does not rank on it.
 
 **The PS5 app, not Plex, is what "crashes".** Its playback buffer is a few
 seconds and it abandons a stream at the first stall, then retries as a transcode,
@@ -323,22 +312,24 @@ This decides whether 4K stays in the watchlist robot's fallback ladder.
 
 ## Troubleshooting
 
-**`zurg` never becomes healthy.** It doesn't open its port until Real-Debrid accepts
-the token, so this almost always means `RD_TOKEN` is wrong or expired.
+**`rdserve` never becomes healthy.** It refuses to start without `RD_TOKEN`; if it
+starts but logs `could not list torrents`, the token is wrong or expired, or
+Real-Debrid is rate-limiting you (`./scripts/rd-check.sh`).
 
 **Plex libraries are empty.** Check the mount actually happened:
 ```
-docker compose exec plex ls /media/movies
+docker compose exec plex ls /media
 docker compose exec plex cat /config/rclone.log
 ```
-An empty listing with no error usually means rclone couldn't reach zurg.
+An empty listing with no error usually means rclone couldn't reach rdserve, or
+nothing has been picked yet — rdserve only serves what `managed.json` lists.
 
 **Playback stutters on a 4K file.** Expected without Plex Pass — see the table above.
 Fetch the 1080p release instead.
 
 **A series shows up under Movies.** Its folder name has no recognisable season or
-episode marker, so the `shows` filters in `config/zurg-config.yml` miss it. Add a
-pattern there.
+episode marker, so `guessit` cannot tell. Add a substring for it to
+`config/overrides.yml`.
 
 **TV matching is weaker than movies.** Single-episode torrents land as flat folders
 rather than `Show/Season 01/...`, which Plex's TV scanner handles inconsistently.
@@ -348,11 +339,14 @@ Movies are the solid path today.
 
 ```
 compose.yaml              the whole stack
-config/zurg-config.yml    RD library -> movies/ + shows/ split (no secrets)
-config/rclone.conf        WebDAV remote pointing at zurg
-docker/plex.Dockerfile    linuxserver/plex + rclone
+rdserve/                  serves your picked torrents as an HTTP tree
+config/rclone.conf        http remote pointing at rdserve
+config/overrides.yml      movie/series overrides for names guessit cannot read
+docker/plex.Dockerfile    linuxserver/plex + rclone + librarian + relay
 docker/plex-prefs.sh      seeds Plex network/analysis prefs on first boot
-docker/rclone-mount.sh    mounts zurg at /media before Plex starts
-watchlist/                Phase 2 — the watchlist robot
+docker/rclone-mount.sh    mounts rdserve at /media before Plex starts
+docker/loopback-proxy.sh  socat relay so Plex sees the PS5 as local
+librarian/                builds the Plex-shaped symlink tree, shared rank.py
+watchlist/                the picker web UI and the (off by default) poller
 .env                      your tokens (gitignored)
 ```

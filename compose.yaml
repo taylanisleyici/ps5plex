@@ -74,14 +74,14 @@ services:
       dockerfile: watchlist/Dockerfile
     container_name: ps5plex-picker
     restart: "no"
-    # No depends_on zurg: this talks to Plex, the scraper and Real-Debrid only.
-    # Gating it on zurg meant a rate-limited zurg blocked the poller too.
+    # No depends_on: this talks to Plex, the scraper and Real-Debrid only, so a
+    # slow rdserve start must not hold the picker back.
     environment:
       PLEX_TOKEN: ${PLEX_TOKEN:-}
       RD_TOKEN: ${RD_TOKEN:-}
       SCRAPER_URL: ${SCRAPER_URL:-}
       WATCHLIST_INTERVAL: ${WATCHLIST_INTERVAL:-120}
-      # Off by default: pick sources yourself at http://localhost:8081
+      # Off by default: pick sources yourself in the picker (PICKER_PORT).
       SUBS_DIR: /state/subs
       AUTO_FETCH: ${AUTO_FETCH:-0}
       MAX_PER_TITLE: ${MAX_PER_TITLE:-3}

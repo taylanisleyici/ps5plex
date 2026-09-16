@@ -71,12 +71,11 @@ def main():
     assert origin_language("United States, Hong Kong") == "en"
     assert origin_language(None) is None
 
-    # on a ~45 Mbps link, a 30 GB remux of a 2h film (~33 Mbps) must lose to an
-    # 8 GB encode (~9 Mbps) of the same quality tier
+    # bitrate is shown, not scored: a 30 GB remux is not penalised for its size
     from rank import est_mbps
     assert round(est_mbps(30 * 1024**3, 120)) == 36
-    assert score("Film.2024.1080p.BluRay.x264-GRP.mkv", 8 * 1024**3, "en", runtime_min=120) > \
-           score("Film.2024.1080p.BluRay.x264-GRP.mkv", 30 * 1024**3, "en", runtime_min=120)
+    assert score("Film.2024.1080p.BluRay.x264-GRP.mkv", 30 * 1024**3, "en", runtime_min=120) >= \
+           score("Film.2024.1080p.BluRay.x264-GRP.mkv", 8 * 1024**3, "en", runtime_min=120)
     # without a runtime nothing changes, so the librarian's calls keep working
     assert score("Film.2024.1080p.BluRay.x264-GRP.mkv", 30 * 1024**3, "en") is not None
 

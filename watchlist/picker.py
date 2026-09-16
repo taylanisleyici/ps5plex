@@ -169,13 +169,30 @@ def candidates(kind, imdb, season=None, episode=None, other_episode=None):
         except Exception as e:
             print(f"[picker] could not check for season packs: {e}", flush=True)
 
-    out, seen = [], set()
-    for s in streams:
-        release, info_hash, size, cached, context = poller._stream_fields(s)
+    # A sponsored rip gets re-uploaded under a plain name: the same 4.6 GB file
+    # appeared eight times as "House.of.the.Dragon.S03E01.mkv" and once as
+    # "...Dragon.Money.Studio.mkv". Byte-identical to a banned rip means banned.
+    fields = [poller._stream_fields(s) for s in streams]
+    tainted = {size for release, _, size, _, context in fields
+               if size and (is_banned(release) or is_banned(context))}
+
+    out, seen, seen_file = [], set(), {}
+    for release, info_hash, size, cached, context in fields:
         if not (release and info_hash) or info_hash in seen:
             continue
         seen.add(info_hash)
+        # The same file is often in the list under a dozen torrents. One row
+        # is enough; keep a cached copy over an uncached one.
+        key = (release.lower(), size)
+        if key in seen_file:
+            if cached and not seen_file[key]["cached"]:
+                seen_file[key].update(hash=info_hash, cached=True,
+                                      rank=None if seen_file[key]["score"] is None
+                                      else seen_file[key]["score"] + 400)
+            continue
         pts = score(release, size, origin, context, runtime)
+        if pts is not None and size in tainted:
+            pts, context = None, context + " (same file as a sponsored rip)"
         mbps = est_mbps(size, runtime)
         dubs, multi = audio_languages(release, context, origin)
         # A cached release plays now; an uncached one has to download first, and
@@ -189,6 +206,7 @@ def candidates(kind, imdb, season=None, episode=None, other_episode=None):
                     "flags": " ".join(re.findall(r"[\U0001F1E6-\U0001F1FF]{2}|🌎", context)),
                     "dub": bool(dubs) and not multi, "dubs": sorted(dubs),
                     "junk": pts is None or is_banned(release) or is_banned(context)})
+        seen_file[key] = out[-1]
     out.sort(key=lambda c: (-1e9 if c["rank"] is None else -c["rank"]))
     return out
 

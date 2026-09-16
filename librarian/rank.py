@@ -29,8 +29,24 @@ DUB_MARKERS = {
     "dual-lat": "es", "espanol": "es", "truefrench": "fr", "vff": "fr", "vfq": "fr",
     "german": "de", "deutsch": "de", "hindi": "hi", "hin": "hi", "tamil": "ta",
     "tam": "ta", "telugu": "te", "tel": "te", "kannada": "kn", "kan": "kn",
-    "malayalam": "ml", "mal": "ml", "rus": "ru", "russian": "ru", "ita": "it",
-    "italian": "it", "dublaj": "tr",
+    "malayalam": "ml", "mal": "ml", "rus": "ru", "russian": "ru", "ru": "ru", "ita": "it",
+    "italian": "it", "dublaj": "tr", "ukr": "uk",
+    # Russian voice-over studios that tag releases with their name only. A
+    # "House.of.the.Dragon.S03E01.1080p.NewComers.mkv" carries no language at all.
+    "lostfilm": "ru", "newstudio": "ru", "newcomers": "ru", "ultradox": "ru",
+    "hdrezka": "ru", "kerob": "ru", "jaskier": "ru", "baibako": "ru", "alexfilm": "ru",
+    "ideafilm": "ru", "coldfilm": "ru", "omskbird": "ru", "kurajbambey": "ru",
+}
+# Comet lists the audio tracks it knows as flags on the last line of its
+# description. A release flagged 🇷🇺 alone is a Russian dub whatever its file
+# name says — that is how "House.of.the.Dragon.S03.1080p.Ru.Ultradox" got
+# through on the name alone. 🌎 means multi/unknown.
+FLAG_LANGUAGE = {
+    "🇬🇧": "en", "🇺🇸": "en", "🇷🇺": "ru", "🇺🇦": "uk", "🇮🇳": "hi", "🇮🇹": "it",
+    "🇪🇸": "es", "🇲🇽": "es", "🇫🇷": "fr", "🇩🇪": "de", "🇯🇵": "ja", "🇨🇳": "zh",
+    "🇰🇷": "ko", "🇹🇷": "tr", "🇧🇷": "pt", "🇵🇹": "pt", "🇨🇿": "cs", "🇵🇱": "pl",
+    "🇳🇱": "nl", "🇸🇪": "sv", "🇭🇺": "hu", "🇷🇴": "ro", "🇬🇷": "el", "🇸🇦": "ar",
+    "🇦🇪": "ar", "🇹🇭": "th", "🇻🇳": "vi", "🇮🇩": "id",
 }
 # Subtitles leave the original audio alone, but burned-in ones cannot be turned
 # off, so they are worth avoiding. Chinese scene tags in particular almost always
@@ -83,6 +99,42 @@ def tokens(name):
 
 def is_banned(name):
     return bool(tokens(name) & set(BANNED))
+
+
+def flags(context):
+    """Language codes for the flag emojis in a scraper description."""
+    return {FLAG_LANGUAGE[f] for f in re.findall(r"[\U0001F1E6-\U0001F1FF]{2}", context or "")
+            if f in FLAG_LANGUAGE}
+
+
+def audio_languages(name, context, origin):
+    """(languages dubbed into, original audio also present) for a release.
+
+    Read from two places: dub markers in the name ("Castellano", "Ru",
+    "Dublado") and the scraper's flag line. Short codes must match a whole
+    token: "castellano" contains "tel", which once made a Spanish film look
+    Telugu. Longer markers can match anywhere, since release names glue words
+    together with dots.
+
+    "ENG.ITA" or 🇬🇧/🇮🇹 lists two audio tracks; that is not an Italian dub of an
+    English show. If the original language is named, the original is there.
+    Flags are only trusted when the original language is known, otherwise a
+    plain English release flagged 🇬🇧 would count as a dub.
+    """
+    full = f"{name} {context}"
+    toks = tokens(full)
+    flat = full.lower().replace(" ", ".")
+    dubs = {lang for marker, lang in DUB_MARKERS.items()
+            if lang != origin
+            and (marker in toks if len(marker) <= 3 else (marker in toks or marker in flat))}
+    flagged = flags(context) if origin else set()
+    dubs |= flagged - {origin}
+    origin_present = bool(origin) and (
+        origin in flagged
+        or any(tok in toks or tok in flat for tok in LANGUAGE_TOKENS.get(origin, ())))
+    multi = origin_present or "🌎" in (context or "") \
+        or any(m in toks or m in flat for m in MULTI_MARKERS)
+    return dubs, multi
 
 
 def est_mbps(size_bytes, runtime_min):
@@ -138,18 +190,8 @@ def score(name, size_bytes=0, origin=None, context="", runtime_min=None):
     toks = tokens(full)
     flat = full.lower().replace(" ", ".")
 
-    # Short codes must match a whole token: "castellano" contains "tel", which
-    # once made a Spanish film look Telugu. Longer markers can match anywhere,
-    # since release names glue words together with dots.
-    dubs = {lang for marker, lang in DUB_MARKERS.items()
-            if lang != origin
-            and (marker in toks if len(marker) <= 3 else (marker in toks or marker in flat))}
+    dubs, multi = audio_languages(name, context, origin)
     if dubs:
-        # "ENG.ITA" lists two audio tracks; it is not an Italian dub of an
-        # English show. If the original language is named, the original is there.
-        origin_present = origin and any(tok in toks or tok in flat
-                                        for tok in LANGUAGE_TOKENS.get(origin, ()))
-        multi = origin_present or any(m in toks or m in flat for m in MULTI_MARKERS)
         # Each extra dub crammed in is another sign of an aggregator re-encode
         # rather than a clean release: "[Tam + Tel + Kan + Hin + Eng]".
         points -= (30 if multi else 90) + 10 * (len(dubs) - 1)

@@ -69,6 +69,19 @@ def main():
            score("www.1tamilblasters.cool - The Pitt (2025) S01 EP(07) "
                  "[1080p HD AVC - x264 - [Tam + Tel + Kan + Hin + Eng]", 1_390_000_000, "en")
 
+    # the pack that came through in full Russian: "Ru" is a dub marker, and the
+    # scraper's flag line is trusted over the file name
+    assert score("House.of.the.Dragon.S03.1080p.x265-ELiTE", origin="en") > \
+           score("House.of.the.Dragon.S03.1080p.Ru.Ultradox", origin="en")
+    # a voice-over studio's name is the only hint some Russian releases carry
+    assert score("House.of.the.Dragon.S03.1080p.x265-ELiTE", origin="en") > \
+           score("House.of.the.Dragon.S03E01.1080p.NewComers.mkv", origin="en")
+    assert score("Show.S03E01.1080p.mkv", origin="en", context="🇬🇧") > \
+           score("Show.S03E01.1080p.mkv", origin="en", context="🇬🇧/🇷🇺") > \
+           score("Show.S03E01.1080p.mkv", origin="en", context="🇷🇺")
+    # but flags mean nothing when the original language is unknown
+    assert score("Show.S03E01.1080p.mkv", context="🇬🇧") == score("Show.S03E01.1080p.mkv")
+
     from rank import origin_language
     assert origin_language("Japan") == "ja"
     assert origin_language("United States, Hong Kong") == "en"
@@ -86,7 +99,7 @@ def main():
     assert score("Film.2024.1080p.x264-GRP.mkv", 100 * 1024**2, "en", runtime_min=120) < \
            score("Film.2024.720p.x264-GRP.mkv", 3 * 1024**3, "en", runtime_min=120)
 
-    print("ok — 24 assertions")
+    print("ok — 28 assertions")
 
 
 if __name__ == "__main__":

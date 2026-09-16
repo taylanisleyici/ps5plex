@@ -84,8 +84,9 @@ It lists your Plex Watchlist, and for each title every available release, ranked
 best-first, with size, estimated bitrate and whether Real-Debrid already has it
 cached. The bitrate is information, not a filter: nothing is pushed down for
 being big, you decide what your link can carry. A filter bar narrows the list by
-text, resolution, codec, HDR and "plays now"; camera rips are hidden unless you
-ask for them. For a show, releases whose torrent holds the whole season are
+text, resolution, codec, HDR and "plays now"; camera rips and releases dubbed
+into another language without the original audio are hidden unless you ask for
+them. Each row shows the scraper's audio-language flags. For a show, releases whose torrent holds the whole season are
 marked **season pack** and shown alone by default: the scraper never names the
 torrent, so a pack is recognised by its hash turning up for more than one
 episode of the season. One add of a pack brings every episode. Filters run in the page, so they are instant. Click one and only

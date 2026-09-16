@@ -24,7 +24,7 @@ import requests
 from guessit import guessit
 
 import poller
-from rank import est_mbps, is_banned, score, tokens
+from rank import audio_languages, est_mbps, is_banned, score, tokens
 
 PORT = int(os.environ.get("PICKER_PORT", "8081"))
 SUBS_DIR = pathlib.Path(os.environ.get("SUBS_DIR", "/state/subs"))
@@ -113,6 +113,7 @@ FILTER_BAR = """
   <label><input type='checkbox' id='cached' onchange='apply()'> plays now</label>
   <label><input type='checkbox' id='hdr' onchange='apply()'> HDR</label>
   <label><input type='checkbox' id='junk' onchange='apply()'> show cam / screener</label>
+  <label><input type='checkbox' id='dub' onchange='apply()'> show dubs</label>
   %s
 </div>
 <p class='meta'>showing <b id='n'>0</b> of %d releases &middot; <b>%d</b> already cached at Real-Debrid</p>
@@ -130,7 +131,7 @@ function apply(){
     const show=(!q||el.textContent.toLowerCase().includes(q))
       &&(!res||d.res===res)&&(!codec||d.codec===codec)
       &&(!on('cached')||d.cached==='1')&&(!on('hdr')||d.hdr==='1')
-      &&(on('junk')||d.junk!=='1')&&(!on('pack')||d.pack==='1');
+      &&(on('junk')||d.junk!=='1')&&(on('dub')||d.dub!=='1')&&(!on('pack')||d.pack==='1');
     el.hidden=!show; if(show)n++;
   });
   document.getElementById('n').textContent=n;
@@ -176,6 +177,7 @@ def candidates(kind, imdb, season=None, episode=None, other_episode=None):
         seen.add(info_hash)
         pts = score(release, size, origin, context, runtime)
         mbps = est_mbps(size, runtime)
+        dubs, multi = audio_languages(release, context, origin)
         # A cached release plays now; an uncached one has to download first, and
         # Real-Debrid can spend minutes just resolving the magnet. That is worth
         # more than a few points of picture quality, so it sorts first.
@@ -183,6 +185,9 @@ def candidates(kind, imdb, season=None, episode=None, other_episode=None):
         out.append({"release": release, "hash": info_hash, "size": size,
                     "cached": cached, "score": pts, "rank": rank_pts, "mbps": mbps,
                     "pack": info_hash in packs,
+                    # the scraper's own flag line, so the audio is visible at a glance
+                    "flags": " ".join(re.findall(r"[\U0001F1E6-\U0001F1FF]{2}|🌎", context)),
+                    "dub": bool(dubs) and not multi, "dubs": sorted(dubs),
                     "junk": pts is None or is_banned(release) or is_banned(context)})
     out.sort(key=lambda c: (-1e9 if c["rank"] is None else -c["rank"]))
     return out
@@ -525,7 +530,11 @@ class Handler(BaseHTTPRequestHandler):
                      else "<span class='badge uncached'>must download</span>")
             if c["pack"]:
                 badge += " <span class='badge cached'>season pack</span>"
+            if c["dub"]:
+                badge += f" <span class='badge junk'>{'/'.join(c['dubs'])} dub only</span>"
             meta = [gb(c["size"]) + (" per episode" if c["pack"] else "")]
+            if c["flags"]:
+                meta.append(c["flags"])
             if c["mbps"]:
                 meta.append(f"~{c['mbps']:.0f} Mbps")
             if c["score"] is not None:
@@ -534,7 +543,7 @@ class Handler(BaseHTTPRequestHandler):
             rows.append(
                 f"<div class='{cls}' data-res='{res}' data-codec='{codec}' data-hdr='{int(hdr)}'"
                 f" data-cached='{int(bool(c['cached']))}' data-junk='{int(c['junk'])}'"
-                f" data-pack='{int(c['pack'])}'>"
+                f" data-pack='{int(c['pack'])}' data-dub='{int(c['dub'])}'>"
                 f"<div class='grow'><div class='name'>{html.escape(c['release'][:110])}</div>"
                 f"<div class='meta'>{badge} &middot; {' &middot; '.join(meta)}</div></div>"
                 f"<form method='post' action='/add'>"

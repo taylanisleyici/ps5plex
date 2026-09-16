@@ -103,7 +103,8 @@ you picked (same source family — Blu-ray, web, TV — same group, same tags),
 throws out files timed to cam/telesync rips, and asks OpenSubtitles for exact
 matches by file hash when the torrent is already downloaded. Each title also has
 a **subtitles** button showing that ranking with the fit score, to add a
-specific one. Shows still go through that button, one episode at a time.
+specific one. Picking a season of a show does the same for every episode the
+pack holds, hashed per episode file.
 
 Sidecar files are deliberate. Subtitles embedded in a release are often the wrong
 version, and image-based ones (PGS) cannot be rendered by the PS5 client at all —

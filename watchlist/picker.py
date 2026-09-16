@@ -21,6 +21,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import requests
+from guessit import guessit
 
 import poller
 from rank import est_mbps, is_banned, score, tokens
@@ -271,31 +272,49 @@ def sub_path(imdb, lang, season=None, episode=None, n=None):
     return SUBS_DIR / f"{imdb}{tag}{mid}.{lang}.srt"
 
 
-def video_hash(folder):
-    """OpenSubtitles hash of the picked torrent's biggest video, via rdserve.
+def folder_files(folder):
+    """(base URL, [(href, size)]) for every file rdserve lists in a torrent.
 
-    Size plus the first and last 64 KB summed as little-endian uint64s. Two
-    ranged GETs against Real-Debrid's CDN, ~128 KB in total. None when the
-    torrent is not downloaded yet or anything else goes wrong; the name-based
-    ranking still runs without it.
+    Sizes come from a one-byte ranged GET each, so nothing is downloaded.
+    An empty list means rdserve does not have the torrent yet.
     """
-    try:
-        requests.get(f"{RDSERVE}/refresh", timeout=60)     # it lists only what it has seen
-        base = f"{RDSERVE}/{urllib.parse.quote(folder)}/"
-        r = requests.get(base, timeout=15)
-        if r.status_code != 200:
-            return None
-        best = None
+    requests.get(f"{RDSERVE}/refresh", timeout=60)     # it lists only what it has seen
+    base = f"{RDSERVE}/{urllib.parse.quote(folder)}/"
+    r = requests.get(base, timeout=15)
+    files = []
+    if r.status_code == 200:
         for href in re.findall(r'href="([^"]+)"', r.text):
             h = requests.get(base + href, headers={"Range": "bytes=0-0"}, timeout=30, stream=True)
             total = int((h.headers.get("Content-Range") or "/0").rsplit("/", 1)[-1] or 0) \
                 or (int(h.headers.get("Content-Length", 0)) if h.status_code == 200 else 0)
             h.close()
-            if best is None or total > best[1]:
-                best = (href, total)
-        if not best or best[1] < 131072:
+            files.append((href, total))
+    return base, files
+
+
+def episodes_in(filename):
+    """Episode numbers a file name carries: {7} for S01E07, {1, 2} for E01-E02."""
+    ep = guessit(filename, {"type": "episode"}).get("episode")
+    return {int(e) for e in (ep if isinstance(ep, list) else [ep]) if e}
+
+
+def video_hash(folder, episode=None):
+    """OpenSubtitles hash of a picked torrent's video, via rdserve.
+
+    Size plus the first and last 64 KB summed as little-endian uint64s. Two
+    ranged GETs against Real-Debrid's CDN, ~128 KB in total. For a show, the
+    file whose name carries `episode`; for a movie, the biggest file. None
+    when the torrent is not downloaded yet or anything else goes wrong; the
+    name-based ranking still runs without it.
+    """
+    try:
+        base, files = folder_files(folder)
+        if episode is not None:
+            files = [f for f in files if episode in episodes_in(urllib.parse.unquote(f[0]))]
+        files = [f for f in files if f[1] >= 131072]
+        if not files:
             return None
-        href, size = best
+        href, size = max(files, key=lambda f: f[1])
 
         def chunk(rng):
             data = requests.get(base + href, headers={"Range": rng}, timeout=60).content[:65536]
@@ -357,32 +376,40 @@ def save_subtitle(url, imdb, lang, season=None, episode=None, n=None):
     return path
 
 
-def auto_subtitles(kind, imdb, release, folder):
-    """Save the best-fitting Turkish and English SRTs for a freshly picked movie.
+def auto_subtitles(kind, imdb, release, folder, season=None, episodes=()):
+    """Save the best-fitting Turkish and English SRTs for a freshly picked title.
 
     The PS5 plays a sidecar SRT for free, but selecting an embedded image
     subtitle forces a full re-encode of the video, so both languages are always
     put on disk. Several per language, numbered best-first: Plex shows them as
     identical "Türkçe (SRT External)" entries in that order, so if the first is
-    out of sync the next one down is the second opinion. Runs in the background
-    after the pick; the librarian places the files as they land.
+    out of sync the next one down is the second opinion. For a show this runs
+    once per episode the season torrent holds. Runs in the background after the
+    pick; the librarian places the files as they land.
     """
+    targets = [(season, e) for e in sorted(episodes)] if kind == "show" else [(None, None)]
+    label = f"{imdb} S{int(season):02d}" if kind == "show" else imdb
     try:
-        for old in SUBS_DIR.glob(f"{imdb}.*.srt"):
+        stale = f"{imdb}.s{int(season):02d}e*.srt" if kind == "show" else f"{imdb}.*.srt"
+        for old in SUBS_DIR.glob(stale):
             old.unlink()                         # timed to the previous pick
-        subs = subtitles(kind, imdb, file_hash=video_hash(folder))
-    except Exception as e:
-        print(f"[picker] subtitles lookup failed for {imdb}: {e}", flush=True)
-        return
+    except OSError:
+        pass
     saved = 0
-    for lang in PREFERRED_LANGS:
-        for n, s in enumerate(pick_subtitles(subs, release, lang), 1):
-            try:
-                save_subtitle(s["url"], imdb, lang, n=n)
-                saved += 1
-            except Exception as e:
-                print(f"[picker] could not save {lang} #{n} for {imdb}: {e}", flush=True)
-    print(f"[picker] {saved} subtitle file(s) saved for {imdb}", flush=True)
+    for s_no, ep in targets:
+        try:
+            subs = subtitles(kind, imdb, s_no, ep, file_hash=video_hash(folder, ep))
+        except Exception as e:
+            print(f"[picker] subtitles lookup failed for {label} E{ep}: {e}", flush=True)
+            continue
+        for lang in PREFERRED_LANGS:
+            for n, s in enumerate(pick_subtitles(subs, release, lang), 1):
+                try:
+                    save_subtitle(s["url"], imdb, lang, s_no, ep, n=n)
+                    saved += 1
+                except Exception as e:
+                    print(f"[picker] could not save {lang} #{n} for {label}: {e}", flush=True)
+    print(f"[picker] {saved} subtitle file(s) saved for {label}", flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -564,15 +591,17 @@ class Handler(BaseHTTPRequestHandler):
                            if v.get("imdb") == form["imdb"][0] and v.get("season") == season]:
                 managed.pop(folder)
             before = set(managed)
-            poller._add_and_record(
-                (0, form["hash"][0], form["hash"][0]), form["title"][0], form["imdb"][0],
-                "", form["kind"][0], managed, season)
-            # ponytail: movies only. A season pack needs one lookup per episode;
-            # use the subtitles page for shows until that is wanted.
-            if form["kind"][0] != "show":
-                folder = next(iter(set(managed) - before), form["hash"][0])
-                threading.Thread(target=auto_subtitles, daemon=True,
-                                 args=(form["kind"][0], form["imdb"][0], folder, folder)).start()
+            kind, imdb = form["kind"][0], form["imdb"][0]
+            episodes = poller._add_and_record(
+                (0, form["hash"][0], form["hash"][0]), form["title"][0], imdb,
+                "", kind, managed, season)
+            folder = next(iter(set(managed) - before), form["hash"][0])
+            if kind == "show" and not episodes:
+                # Not downloaded yet, so Real-Debrid has no file list. Assume the
+                # pack holds the aired season; extra subtitles are harmless.
+                episodes = poller.aired_episodes(imdb).get(season, [])
+            threading.Thread(target=auto_subtitles, daemon=True,
+                             args=(kind, imdb, folder, folder, season, episodes)).start()
             return self._redirect("/")
 
         if self.path == "/addsub":

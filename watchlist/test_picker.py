@@ -15,6 +15,12 @@ assert sub_score(FORCED, RELEASE) < sub_score(WEBDL, RELEASE)
 picked = pick_subtitles([TELESYNC, WEBDL, BLURAY, HASHED, FORCED, dict(BLURAY, lang="eng")], RELEASE, "tur", n=3)
 assert [s["id"] for s in picked] == ["4", "3", "2"], [s["id"] for s in picked]
 
+# --- which file in a season pack is which episode -----------------------------
+from picker import episodes_in
+assert episodes_in("The.Pitt.S01E07.1080p.WEB.h264-ETHEL.mkv") == {7}
+assert episodes_in("Show.S02E01-E02.1080p.mkv") == {1, 2}
+assert episodes_in("Show.2024.1080p.BluRay.x264.mkv") == set()
+
 # --- encoding repair ---------------------------------------------------------
 
 # the actual Hail Mary file: UTF-8 read as cp1252 and re-saved as UTF-8
@@ -28,4 +34,4 @@ assert clean_srt("İşte başlıyoruz.".encode("utf-8")) == "İşte başlıyoruz
 assert clean_srt("Çalış".encode("cp1254")) == "Çalış".encode("utf-8")
 # a BOM is dropped
 assert clean_srt(b"\xef\xbb\xbfTamam") == b"Tamam"
-print("ok — 10 assertions")
+print("ok — 13 assertions")

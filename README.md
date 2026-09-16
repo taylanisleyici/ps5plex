@@ -84,7 +84,8 @@ It lists your Plex Watchlist, and for each title every available release, ranked
 best-first, with size, estimated bitrate and whether Real-Debrid already has it
 cached. The bitrate is information, not a filter: nothing is pushed down for
 being big, you decide what your link can carry. Click one and only that one is
-added. Like Stremio's stream list, and nothing is fetched behind your back.
+added; picking another source for the same title replaces it. Like Stremio's
+stream list, and nothing is fetched behind your back.
 
 The same page lists what is currently in your library, with a remove button.
 

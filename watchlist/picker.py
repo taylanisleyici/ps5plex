@@ -297,6 +297,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/add":
             season = form.get("season", [""])[0]
             season = int(season) if season else None
+            # A new pick replaces the old one for the same title (same season
+            # for a show). The torrent stays in Real-Debrid; only the library
+            # forgets it, and the librarian swaps the link on its next pass.
+            for folder in [f for f, v in managed.items()
+                           if v.get("imdb") == form["imdb"][0] and v.get("season") == season]:
+                managed.pop(folder)
             poller._add_and_record(
                 (0, form["hash"][0], form["hash"][0]), form["title"][0], form["imdb"][0],
                 "", form["kind"][0], managed, season)

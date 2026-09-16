@@ -13,6 +13,7 @@ import html
 import json
 import os
 import pathlib
+import re
 import threading
 import time
 import urllib.parse
@@ -60,6 +61,14 @@ button.sec{background:#333;color:#ddd}
 .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
 .tabs a{padding:6px 10px;background:#242424;border-radius:6px;font-size:14px}
 .tabs a.on{background:#e5a00d;color:#111;font-weight:600}
+.filters{gap:8px;align-items:center;padding:10px;background:#1c1c1c;border-radius:8px}
+.filters input[type=text],.filters select{background:#2a2a2a;color:#e8e8e8;border:1px solid #444;
+border-radius:6px;padding:8px;font-size:15px;min-height:40px}
+.filters input[type=text]{flex:1 1 160px}
+.filters label{font-size:14px;color:#ccc;display:flex;gap:6px;align-items:center;
+padding:6px 8px;background:#242424;border-radius:6px;white-space:nowrap}
+.filters input[type=checkbox]{width:18px;height:18px;margin:0}
+.item[hidden]{display:none}
 @media(max-width:480px){
   .item{padding:10px}
   .grow{flex:1 1 100%}
@@ -77,6 +86,54 @@ def page(title, body):
 
 def gb(n):
     return f"{n / 1024 ** 3:.1f} GB" if n else "?"
+
+
+def tags(release):
+    """(resolution, codec, hdr) read off the release name, for the filter bar."""
+    low = release.lower()
+    res = next((r for r in ("2160p", "1080p", "720p", "480p") if r in low),
+               "2160p" if re.search(r"\b(4k|uhd)\b", low.replace(".", " ")) else "other")
+    codec = ("x265" if re.search(r"x265|hevc|h\.?265", low)
+             else "x264" if re.search(r"x264|avc|h\.?264", low) else "other")
+    hdr = bool(re.search(r"\b(hdr|hdr10|dovi|dolby.?vision)\b", low.replace(".", " ")))
+    return res, codec, hdr
+
+
+# Filters run in the browser: the release list is already on the page, and
+# asking the scraper again for every click would cost 5-90 s each time.
+FILTER_BAR = """
+<div class='tabs filters'>
+  <input type='text' id='q' placeholder='search releases' oninput='apply()'>
+  <select id='res' onchange='apply()'><option value=''>any resolution</option>
+    <option>2160p</option><option>1080p</option><option>720p</option></select>
+  <select id='codec' onchange='apply()'><option value=''>any codec</option>
+    <option>x265</option><option>x264</option></select>
+  <label><input type='checkbox' id='cached' onchange='apply()'> plays now</label>
+  <label><input type='checkbox' id='hdr' onchange='apply()'> HDR</label>
+  <label><input type='checkbox' id='junk' onchange='apply()'> show cam / screener</label>
+</div>
+<p class='meta'>showing <b id='n'>0</b> of %d releases &middot; <b>%d</b> already cached at Real-Debrid</p>
+"""
+# Goes after the rows, so apply() finds them when it runs on load.
+FILTER_JS = """
+<script>
+function apply(){
+  const v=id=>document.getElementById(id).value, on=id=>document.getElementById(id).checked;
+  const q=v('q').toLowerCase(), res=v('res'), codec=v('codec');
+  let n=0;
+  document.querySelectorAll('.item[data-res]').forEach(el=>{
+    const d=el.dataset;
+    const show=(!q||el.textContent.toLowerCase().includes(q))
+      &&(!res||d.res===res)&&(!codec||d.codec===codec)
+      &&(!on('cached')||d.cached==='1')&&(!on('hdr')||d.hdr==='1')
+      &&(on('junk')||d.junk!=='1');
+    el.hidden=!show; if(show)n++;
+  });
+  document.getElementById('n').textContent=n;
+}
+apply();
+</script>
+"""
 
 
 def candidates(kind, imdb, season=None, episode=None):
@@ -230,8 +287,10 @@ class Handler(BaseHTTPRequestHandler):
                 meta.append(f"~{c['mbps']:.0f} Mbps")
             if c["score"] is not None:
                 meta.append(f"score {c['score']:.0f}")
+            res, codec, hdr = tags(c["release"])
             rows.append(
-                f"<div class='{cls}'>"
+                f"<div class='{cls}' data-res='{res}' data-codec='{codec}' data-hdr='{int(hdr)}'"
+                f" data-cached='{int(bool(c['cached']))}' data-junk='{int(c['junk'])}'>"
                 f"<div class='grow'><div class='name'>{html.escape(c['release'][:110])}</div>"
                 f"<div class='meta'>{badge} &middot; {' &middot; '.join(meta)}</div></div>"
                 f"<form method='post' action='/add'>"
@@ -241,11 +300,8 @@ class Handler(BaseHTTPRequestHandler):
                 f"<input type='hidden' name='title' value='{html.escape(title)}'>"
                 f"<input type='hidden' name='season' value='{season if kind == 'show' else ''}'>"
                 f"<button>add</button></form></div>")
-        summary = (f"<p class='meta'>{len(cands)} releases &middot; "
-                   f"<b>{ready}</b> already cached at Real-Debrid (those play "
-                   f"immediately and are listed first)</p>")
-        return self._send(page(title, head + summary + (
-            "".join(rows) or "<p class='meta'>No releases found.</p>")))
+        body = ("".join(rows) or "<p class='meta'>No releases found.</p>")
+        return self._send(page(title, head + FILTER_BAR % (len(cands), ready) + body + FILTER_JS))
 
     def subs(self, q):
         kind = q.get("kind", ["movie"])[0]

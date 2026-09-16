@@ -83,9 +83,11 @@ and has to be fetched first, which can take minutes just to resolve the magnet.
 It lists your Plex Watchlist, and for each title every available release, ranked
 best-first, with size, estimated bitrate and whether Real-Debrid already has it
 cached. The bitrate is information, not a filter: nothing is pushed down for
-being big, you decide what your link can carry. Click one and only that one is
-added; picking another source for the same title replaces it. Like Stremio's
-stream list, and nothing is fetched behind your back.
+being big, you decide what your link can carry. A filter bar narrows the list by
+text, resolution, codec, HDR and "plays now"; camera rips are hidden unless you
+ask for them. Filters run in the page, so they are instant. Click one and only
+that one is added; picking another source for the same title replaces it. Like
+Stremio's stream list, and nothing is fetched behind your back.
 
 The same page lists what is currently in your library, with a remove button.
 

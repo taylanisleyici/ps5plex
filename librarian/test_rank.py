@@ -11,18 +11,21 @@ def main():
     assert score(CAM) is None, "a CAM must never be selectable"
     assert score(GOOD) is not None
 
-    # a 1080p x264 must beat a 4K x265, because the PS5 can direct stream one
-    # and has to software-transcode the other
-    assert score("Movie.2024.1080p.BluRay.x264-GRP.mkv") > \
-           score("Movie.2024.2160p.BluRay.x265-GRP.mkv")
-
-    # MP4 + x264 is the best case of all: pure Direct Play
-    assert score("Movie.2024.1080p.BluRay.x264-GRP.mp4") > \
+    # the PS5 app copies 2160p HEVC through its remux, so 4K beats 1080p
+    assert score("Movie.2024.2160p.BluRay.x265-GRP.mkv") > \
            score("Movie.2024.1080p.BluRay.x264-GRP.mkv")
 
-    # HDR costs a software tonemap, so plain SDR wins at equal resolution
-    assert score("Movie.2024.1080p.BluRay.x265-GRP.mkv") > \
-           score("Movie.2024.1080p.BluRay.HDR.DoVi.x265-GRP.mkv")
+    # codec is irrelevant on the copy path: x264 and x265 tie at equal quality
+    assert score("Movie.2024.1080p.BluRay.x264-GRP.mkv") == \
+           score("Movie.2024.1080p.BluRay.x265-GRP.mkv")
+
+    # HDR10 passes through and the TV shows it, so it wins at equal resolution
+    assert score("Movie.2024.2160p.BluRay.HDR.DoVi.x265-GRP.mkv") > \
+           score("Movie.2024.2160p.BluRay.x265-GRP.mkv")
+
+    # a remux is the cleanest source there is
+    assert score("Movie.2024.2160p.BluRay.REMUX.HEVC-GRP.mkv") > \
+           score("Movie.2024.2160p.BluRay.x265-GRP.mkv")
 
     # and a real 720p beats a fake 1080p camera rip
     assert score("Movie.2024.720p.WEB-DL.x264.mkv") is not None
@@ -83,7 +86,7 @@ def main():
     assert score("Film.2024.1080p.x264-GRP.mkv", 100 * 1024**2, "en", runtime_min=120) < \
            score("Film.2024.720p.x264-GRP.mkv", 3 * 1024**3, "en", runtime_min=120)
 
-    print("ok — 23 assertions")
+    print("ok — 24 assertions")
 
 
 if __name__ == "__main__":

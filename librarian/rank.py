@@ -4,11 +4,10 @@ Two jobs. First, never surface a camera recording when a real source exists — 
 CAM is worthless no matter how good its resolution claims to be, and they often
 carry burned-in betting ads.
 
-Second, prefer what the PS5 can actually play. Plex's PlayStation profile only
-accepts HEVC inside MP4, and torrents are MKV, so an x265 file forces a full
-software re-encode (there is no Plex Pass here, so no hardware help), while an
-x264 file is just a container swap. A 1080p x264 release therefore beats a 2160p
-x265 one *in practice*, despite looking worse on paper.
+Second, prefer the best picture. Measured on this server, the PS5 app copies
+both H.264 and 2160p HEVC HDR video straight through its DASH remux, so codec and
+HDR cost nothing; only DTS/TrueHD audio gets converted, which is trivial. Higher
+resolution and a cleaner source are what is left to rank on.
 """
 import re
 
@@ -16,9 +15,8 @@ import re
 BANNED = ("cam", "camrip", "hdcam", "ts", "telesync", "hdts", "tc", "telecine",
           "scr", "screener", "dvdscr", "r5", "workprint", "hdtc", "predvd")
 
-RESOLUTION = {"1080p": 100, "720p": 40, "2160p": 30, "480p": 5}   # 2160p costs a transcode
-CODEC = {"x264": 60, "x265": 0}
-SOURCE_BONUS = {"bluray": 25, "remux": 20, "web-dl": 20, "webdl": 20, "webrip": 10, "hdtv": 0}
+RESOLUTION = {"2160p": 100, "1080p": 70, "720p": 30, "480p": 5}
+SOURCE_BONUS = {"remux": 30, "bluray": 25, "web-dl": 20, "webdl": 20, "webrip": 10, "hdtv": 0}
 
 # Always prefer the original audio. What ruins a release is a DUB into a
 # language the title was not made in — not subtitles, which sit on top of the
@@ -122,22 +120,19 @@ def score(name, size_bytes=0, origin=None, context="", runtime_min=None):
     else:
         points += 20                      # unlabelled: assume something middling
 
-    points += CODEC["x264"] if re.search(r"(?i)x264|h\.?264|avc", name) else CODEC["x265"]
-
     for label, value in SOURCE_BONUS.items():
         if label in low.replace(" ", "-"):
             points += value
             break
 
-    # An MP4 needs no container swap at all — pure Direct Play on the PS5.
-    if low.endswith(".mp4"):
-        points += 15
-    # DTS/TrueHD are outside the PlayStation profile and force an audio transcode.
+    # DTS/TrueHD get converted to AAC on the fly. Cheap, but it keeps the
+    # transcoder awake, so an AC3/EAC3 track is slightly nicer.
     if re.search(r"(?i)\b(dts|truehd)\b", name):
-        points -= 10
-    # Tone-mapping HDR to SDR in software is the single most expensive thing here.
+        points -= 5
+    # HDR10 passes through the copy and the TV shows it. Dolby Vision's extra
+    # layer is dropped by the remux, so it is no better than plain HDR10.
     if re.search(r"(?i)\b(hdr|dovi|dolby.?vision|hdr10)\b", name):
-        points -= 15
+        points += 10
 
     full = f"{name} {context}"
     toks = tokens(full)

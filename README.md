@@ -91,16 +91,24 @@ Stremio's stream list, and nothing is fetched behind your back.
 
 The same page lists what is currently in your library, with a remove button.
 
-Each title also has a **subtitles** button. It lists what OpenSubtitles has,
-Turkish first then English, from the same `subs5.strem.io` addon your Stremio
-already uses — no API key. Picking one saves it as a sidecar file next to the
-video, `Backrooms (2026).tur.srt` beside `Backrooms (2026).mkv`, which Plex reads
-as a selectable track.
+Picking a movie also saves the top **Turkish and English SRT** from OpenSubtitles
+automatically, as sidecar files next to the video: `Backrooms (2026).tur.srt`
+beside `Backrooms (2026).mkv`, which Plex reads as a selectable track. Each title
+also has a **subtitles** button to choose a different one; it lists what the same
+`subs5.strem.io` addon your Stremio already uses has, Turkish first — no API key.
+Shows still go through that button, one episode at a time.
 
 Sidecar files are deliberate. Subtitles embedded in a release are often the wrong
 version, and image-based ones (PGS) cannot be rendered by the PS5 client at all —
-Plex has to burn those into the picture, which turns a free direct stream into a
-full transcode. A plain `.srt` is the cheapest thing for the PS5 to handle.
+Plex has to burn those into the picture, which turns a free 4K copy into a full
+software re-encode that dies within seconds. **In the PS5 player, only ever pick
+the external SRT tracks.** A plain `.srt` is the cheapest thing for the PS5 to
+handle.
+
+Files are normalised to UTF-8 on save. OpenSubtitles hands out Windows-1254
+files and, worse, UTF-8 that was mangled through Windows-1252 upstream
+(`KURTULUÅž` for `KURTULUŞ`); Plex shows both exactly as broken as they arrive,
+so the picker repairs them first.
 
 Automatic fetching still exists but is **off by default**. `AUTO_FETCH=1` turns it
 on and `MAX_PER_TITLE` caps it, because the first version quietly pulled 17

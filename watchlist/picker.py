@@ -187,13 +187,77 @@ def sub_path(imdb, lang, season=None, episode=None):
     return SUBS_DIR / f"{imdb}{tag}.{lang}.srt"
 
 
+def clean_srt(raw):
+    """Return the subtitle as UTF-8 bytes, whatever it arrived as.
+
+    OpenSubtitles files come three ways: proper UTF-8, legacy Windows-1254, and
+    UTF-8 that someone upstream read as Windows-1252 and re-saved, which turns
+    "KURTULUŞ" into "KURTULUÅž". Plex renders the last kind exactly as broken as
+    it looks, so undo it here.
+    """
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1254", "replace")
+    if any(m in text for m in ("Ã", "Å", "Ä")):        # Turkish never uses these
+        try:
+            text = _unmangle(text)
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass                                        # not that kind of broken
+    return text.encode("utf-8")
+
+
+def _unmangle(text):
+    """Reverse a UTF-8 → Windows-1252 misread, one character at a time.
+
+    Windows maps the five bytes cp1252 leaves undefined (0x81, 0x8D, 0x8F, 0x90,
+    0x9D) to C1 control characters, which Python's codec refuses. A single one
+    of those in a 200 KB file, like the "Á" in a name, left the whole file
+    mangled, so fall back to the raw byte value for anything below 256.
+    """
+    out = bytearray()
+    for c in text:
+        try:
+            out += c.encode("cp1252")
+        except UnicodeEncodeError:
+            if ord(c) >= 256:
+                raise
+            out.append(ord(c))
+    return out.decode("utf-8")
+
+
 def save_subtitle(url, imdb, lang, season=None, episode=None):
     r = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     SUBS_DIR.mkdir(parents=True, exist_ok=True)
     path = sub_path(imdb, lang, season, episode)
-    path.write_bytes(r.content)
+    path.write_bytes(clean_srt(r.content))
     return path
+
+
+def auto_subtitles(kind, imdb):
+    """Save the top Turkish and English SRT for a title as soon as it is picked.
+
+    The PS5 plays a sidecar SRT for free, but selecting an embedded image
+    subtitle forces a full re-encode of the video. Having both languages on
+    disk means the player's menu always has a safe choice.
+    """
+    try:
+        subs = subtitles(kind, imdb)
+    except Exception as e:
+        print(f"[picker] subtitles lookup failed for {imdb}: {e}", flush=True)
+        return
+    for lang in PREFERRED_LANGS:
+        if sub_path(imdb, lang).exists():
+            continue
+        hit = next((s for s in subs if s.get("lang") == lang), None)
+        if not hit:
+            continue
+        try:
+            save_subtitle(hit["url"], imdb, lang)
+            print(f"[picker] saved {lang} subtitle for {imdb}", flush=True)
+        except Exception as e:
+            print(f"[picker] could not save {lang} subtitle for {imdb}: {e}", flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -362,6 +426,10 @@ class Handler(BaseHTTPRequestHandler):
             poller._add_and_record(
                 (0, form["hash"][0], form["hash"][0]), form["title"][0], form["imdb"][0],
                 "", form["kind"][0], managed, season)
+            # ponytail: movies only. A season pack needs one lookup per episode;
+            # use the subtitles page for shows until that is wanted.
+            if form["kind"][0] != "show":
+                auto_subtitles(form["kind"][0], form["imdb"][0])
             return self._redirect("/")
 
         if self.path == "/addsub":

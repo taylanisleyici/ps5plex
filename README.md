@@ -134,10 +134,15 @@ forced-only and goes last. A file on a different timing is never promoted.
 keeps its own per-user copy, which starts as English / manual. Set it once:
 
 ```
-curl -X PUT "http://localhost:32400/accounts/1?defaultSubtitleLanguage=tur&subtitleMode=2&defaultAudioLanguage=en&autoSelectAudio=1&X-Plex-Token=$PLEX_TOKEN"
+curl -X PUT "http://localhost:32400/accounts/1?defaultSubtitleLanguage=tur&subtitleMode=2&defaultAudioLanguage=und&autoSelectAudio=0&X-Plex-Token=$PLEX_TOKEN"
 ```
 
 (`subtitleMode` 2 = always enabled, 1 = only with foreign audio, 0 = manual.)
+Audio is deliberately `und` (undetermined) with auto-select off: Plex has no
+"original language" choice, and this keeps each file's default track, which is
+the original on any proper release. Do not send an empty value — the server
+silently fills it with the subtitle language, which would pick a Turkish dub.
+The picker already ranks dubbed releases down.
 It persists in the server database. There is no secondary language; save both
 Turkish and English and switch in the player when a title has no Turkish.
 

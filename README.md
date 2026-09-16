@@ -123,6 +123,24 @@ software re-encode that dies within seconds. **In the PS5 player, only ever pick
 the external SRT tracks.** A plain `.srt` is the cheapest thing for the PS5 to
 handle.
 
+Once downloaded, the files are compared with each other: one that shares the
+leader's timing but covers a stretch the leader leaves empty goes first (the
+official subtitles skip lines HBO burns into the picture, such as High
+Valyrian; a fan file adds them), and a file a fraction of the others' length is
+forced-only and goes last. A file on a different timing is never promoted.
+
+**Default subtitle language lives on the server, not on plex.tv.** The Account
+→ Language page at plex.tv does not reach the server's auto-select; the server
+keeps its own per-user copy, which starts as English / manual. Set it once:
+
+```
+curl -X PUT "http://localhost:32400/accounts/1?defaultSubtitleLanguage=tur&subtitleMode=2&defaultAudioLanguage=en&autoSelectAudio=1&X-Plex-Token=$PLEX_TOKEN"
+```
+
+(`subtitleMode` 2 = always enabled, 1 = only with foreign audio, 0 = manual.)
+It persists in the server database. There is no secondary language; save both
+Turkish and English and switch in the player when a title has no Turkish.
+
 Files are normalised to UTF-8 on save. OpenSubtitles hands out Windows-1254
 files and, worse, UTF-8 that was mangled through Windows-1252 upstream
 (`KURTULUÅž` for `KURTULUŞ`); Plex shows both exactly as broken as they arrive,

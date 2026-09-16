@@ -419,6 +419,59 @@ def save_subtitle(url, imdb, lang, season=None, episode=None, n=None):
     return path
 
 
+def speech_times(raw):
+    """Start second of every cue that is speech, not SDH noise or music."""
+    out = []
+    for block in re.split(r"\n\s*\n", raw.decode("utf-8", "replace")):
+        m = re.search(r"(\d+):(\d+):(\d+)[,.]\d+\s*-->", block)
+        if not m:
+            continue
+        text = re.sub(r"\{[^}]*\}|<[^>]+>", "", " ".join(block.splitlines()[2:])).strip()
+        if not text or re.fullmatch(r"[\[\(].*[\]\)]|[♪♫\s]+", text):
+            continue
+        out.append(int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)))
+    return out
+
+
+def aligned(a, b):
+    """Do two files share a timing? Half of b's cues land within a second of an a cue."""
+    if not a or not b:
+        return False
+    a = sorted(a)
+    import bisect
+    hits = 0
+    for t in b:
+        i = bisect.bisect_left(a, t)
+        if (i < len(a) and abs(a[i] - t) <= 1) or (i and abs(a[i - 1] - t) <= 1):
+            hits += 1
+    return hits >= len(b) / 2
+
+
+def order_saved(files):
+    """Reorder downloaded subtitles by what they actually contain.
+
+    `files` is [(rank, raw bytes)] best-fit first. Two fixes on top of the fit
+    score, both from a real episode: the official-subtitle translation skips
+    lines that are burned into the picture (High Valyrian), so a file with the
+    same timing that covers a stretch the leader leaves empty is more complete
+    and goes first; a file that is a fraction of the others' length is forced/
+    partial and goes last. A file whose timing does not match the leader is a
+    different cut and is never promoted — being early there means out of sync.
+    """
+    times = [speech_times(raw) for _, raw in files]
+    order = list(range(len(files)))
+    lead = 0
+    for i in order[1:]:
+        if aligned(times[lead], times[i]) and times[lead] \
+                and sum(t < min(times[lead]) for t in times[i]) >= 2:
+            lead = i
+    order.remove(lead)
+    order.insert(0, lead)
+    most = max((len(t) for t in times), default=0)
+    partial = [i for i in order if len(times[i]) < most * 0.4]
+    return [i for i in order if i not in partial] + partial
+
+
 def auto_subtitles(kind, imdb, release, folder, season=None, episodes=()):
     """Save the best-fitting Turkish and English SRTs for a freshly picked title.
 
@@ -446,12 +499,18 @@ def auto_subtitles(kind, imdb, release, folder, season=None, episodes=()):
             print(f"[picker] subtitles lookup failed for {label} E{ep}: {e}", flush=True)
             continue
         for lang in PREFERRED_LANGS:
-            for n, s in enumerate(pick_subtitles(subs, release, lang), 1):
+            got = []
+            for s in pick_subtitles(subs, release, lang):
                 try:
-                    save_subtitle(s["url"], imdb, lang, s_no, ep, n=n)
-                    saved += 1
+                    r = requests.get(s["url"], timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+                    r.raise_for_status()
+                    got.append(clean_srt(r.content))
                 except Exception as e:
-                    print(f"[picker] could not save {lang} #{n} for {label}: {e}", flush=True)
+                    print(f"[picker] could not fetch a {lang} subtitle for {label}: {e}", flush=True)
+            SUBS_DIR.mkdir(parents=True, exist_ok=True)
+            for n, i in enumerate(order_saved(list(enumerate(got))), 1):
+                sub_path(imdb, lang, s_no, ep, n).write_bytes(got[i])
+                saved += 1
     print(f"[picker] {saved} subtitle file(s) saved for {label}", flush=True)
 
 

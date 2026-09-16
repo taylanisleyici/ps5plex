@@ -95,6 +95,17 @@ def main():
     assert score("Show.S03E01.2160p.HDR.x265-Master5.mkv", 9_700_000_000, "en", runtime_min=60) > \
            score("Show.S03E01.2160p.DV.HDR.x265.PROPER-Amen.mkv", 2_300_000_000, "en", runtime_min=60)
 
+    # preferences from the picker's settings page change the order
+    import json, os, tempfile, rank
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump({"hdr": "avoid", "max_resolution": "1080p"}, f)
+    rank.PREFS_FILE = f.name
+    assert score("Movie.2024.2160p.BluRay.x265-GRP.mkv") > score("Movie.2024.2160p.BluRay.HDR.x265-GRP.mkv")
+    assert score("Movie.2024.1080p.BluRay.x264-GRP.mkv") > score("Movie.2024.2160p.BluRay.x265-GRP.mkv")
+    os.unlink(f.name)
+    rank.PREFS_FILE = f.name                      # gone again: back to the defaults
+    assert score("Movie.2024.2160p.BluRay.x265-GRP.mkv") > score("Movie.2024.1080p.BluRay.x264-GRP.mkv")
+
     from rank import origin_language
     assert origin_language("Japan") == "ja"
     assert origin_language("United States, Hong Kong") == "en"
@@ -112,7 +123,7 @@ def main():
     assert score("Film.2024.1080p.x264-GRP.mkv", 100 * 1024**2, "en", runtime_min=120) < \
            score("Film.2024.720p.x264-GRP.mkv", 3 * 1024**3, "en", runtime_min=120)
 
-    print("ok — 35 assertions")
+    print("ok — 38 assertions")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,23 @@ both H.264 and 2160p HEVC HDR video straight through its DASH remux, so codec an
 HDR cost nothing; only DTS/TrueHD audio gets converted, which is trivial. Higher
 resolution and a cleaner source are what is left to rank on.
 """
+import json
+import os
 import re
+
+# Preferences shared with the picker's /settings page (see DEFAULTS there).
+# Only the two that change how a release scores are read here.
+PREFS_FILE = os.environ.get("PS5PLEX_SETTINGS", "/state/settings.json")
+RES_ORDER = ("480p", "720p", "1080p", "2160p")
+
+
+def prefs():
+    try:
+        with open(PREFS_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
 
 # A camera recording is never acceptable. Scored as None = do not use at all.
 BANNED = ("cam", "camrip", "hdcam", "ts", "telesync", "hdts", "tc", "telecine",
@@ -180,10 +196,15 @@ def score(name, size_bytes=0, origin=None, context="", runtime_min=None):
 
     low = name.lower()
     points = 0
+    p = prefs()
 
     for label, value in RESOLUTION.items():
         if label in low:
             points += value
+            # Above the TV or the link: still listed, but not on top.
+            cap = p.get("max_resolution", "any")
+            if cap in RES_ORDER and RES_ORDER.index(label) > RES_ORDER.index(cap):
+                points -= 80
             break
     else:
         points += 20                      # unlabelled: assume something middling
@@ -197,10 +218,11 @@ def score(name, size_bytes=0, origin=None, context="", runtime_min=None):
     # transcoder awake, so an AC3/EAC3 track is slightly nicer.
     if re.search(r"(?i)\b(dts|truehd)\b", name):
         points -= 5
-    # HDR10 passes through the copy and the TV shows it. Dolby Vision's extra
-    # layer is dropped by the remux, so it is no better than plain HDR10.
+    # HDR10 passes through the copy and an HDR TV shows it. Dolby Vision's extra
+    # layer is dropped by the remux, so it is no better than plain HDR10. On an
+    # SDR-only TV the same stream looks washed out, hence the setting.
     if re.search(r"(?i)\b(hdr|dovi|dolby.?vision|hdr10)\b", name):
-        points += 10
+        points += {"prefer": 10, "neutral": 0, "avoid": -40}.get(p.get("hdr", "prefer"), 10)
 
     full = f"{name} {context}"
     toks = tokens(full)

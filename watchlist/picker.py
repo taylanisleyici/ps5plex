@@ -31,8 +31,58 @@ SUBS_DIR = pathlib.Path(os.environ.get("SUBS_DIR", "/state/subs"))
 # Stremio's OpenSubtitles addon — no API key, and it is the same source your
 # Stremio already uses.
 SUBS_API = "https://opensubtitles-v3.strem.io"
-# Turkish first, English as the fallback.
-PREFERRED_LANGS = ("tur", "eng")
+# Where Plex is reachable from this container, for pushing the language default.
+PLEX_URL = os.environ.get("PLEX_URL", "http://plex:32400").rstrip("/")
+PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "").strip()
+
+# Preferences live in one JSON file on the shared state volume, edited from the
+# /settings page. The defaults are deliberately plain so the repo is not tuned
+# to one household; the file is what makes it yours.
+SETTINGS_FILE = pathlib.Path(os.environ.get("PS5PLEX_SETTINGS", "/state/settings.json"))
+DEFAULTS = {
+    "subtitle_langs": ["eng"],   # ISO 639-2 as OpenSubtitles uses; the first is Plex's default
+    "subs_per_lang": 5,          # how many alternatives to save per language
+    "auto_subtitles": True,      # fetch them on every pick
+    "subtitle_mode": 2,          # Plex: 2 always on, 1 only with foreign audio, 0 manual
+    "audio": "original",         # keep the file's default track, or an ISO 639-2 code
+    "max_resolution": "any",     # any / 1080p / 720p — rank anything above it down
+    "hdr": "prefer",             # prefer / neutral / avoid (SDR-only TV)
+    "cached_first": True,        # releases already at Real-Debrid sort first
+}
+
+
+def settings():
+    try:
+        saved = json.loads(SETTINGS_FILE.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    return {**DEFAULTS, **{k: v for k, v in saved.items() if k in DEFAULTS}}
+
+
+def save_settings(values):
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(values, indent=2))
+
+
+def push_plex_defaults(values):
+    """Mirror the language choices into Plex's per-user setting.
+
+    Plex's auto-select reads a setting stored on the server, not the plex.tv
+    account page, and it starts as English/manual. "original" audio is sent as
+    `und` with auto-select off: an empty value is silently replaced with the
+    subtitle language, which would pick a dub.
+    """
+    if not PLEX_TOKEN:
+        return "no PLEX_TOKEN"
+    params = {"defaultSubtitleLanguage": values["subtitle_langs"][0],
+              "subtitleMode": values["subtitle_mode"], "X-Plex-Token": PLEX_TOKEN}
+    if values["audio"] == "original":
+        params.update(defaultAudioLanguage="und", autoSelectAudio=0)
+    else:
+        params.update(defaultAudioLanguage=values["audio"], autoSelectAudio=1)
+    # ponytail: account 1 is the server owner; managed users would need their own id.
+    r = requests.put(f"{PLEX_URL}/accounts/1", params=params, timeout=15)
+    return "ok" if r.ok else f"http {r.status_code}"
 
 CSS = """
 *{box-sizing:border-box}
@@ -71,6 +121,13 @@ border-radius:6px;padding:8px;font-size:15px;min-height:40px}
 padding:6px 8px;background:#242424;border-radius:6px;white-space:nowrap}
 .filters input[type=checkbox]{width:18px;height:18px;margin:0}
 .item[hidden]{display:none}
+header .right{float:right;color:#aaa;font-size:14px}
+.settings input[type=text],.settings input[type=number],.settings select{background:#2a2a2a;
+color:#e8e8e8;border:1px solid #444;border-radius:6px;padding:8px;font-size:15px;min-height:40px;
+flex:0 1 260px}
+.settings label{color:#ccc;display:flex;gap:6px;align-items:center}
+.settings input[type=checkbox]{width:18px;height:18px}
+code{background:#242424;padding:1px 5px;border-radius:4px}
 @media(max-width:480px){
   .item{padding:10px}
   .grow{flex:1 1 100%}
@@ -82,7 +139,8 @@ padding:6px 8px;background:#242424;border-radius:6px;white-space:nowrap}
 def page(title, body):
     return (f"<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
             f"<title>{html.escape(title)}</title><style>{CSS}</style></head><body>"
-            f"<header><a href='/'>ps5plex</a> &middot; {html.escape(title)}</header>"
+            f"<header><a href='/'>ps5plex</a> &middot; {html.escape(title)}"
+            f"<a href='/settings' class='right'>settings</a></header>"
             f"<div class='wrap'>{body}</div></body></html>")
 
 
@@ -176,6 +234,7 @@ def candidates(kind, imdb, season=None, episode=None, other_episode=None):
     tainted = {size for release, _, size, _, context in fields
                if size and (is_banned(release) or is_banned(context))}
 
+    cached_first = settings()["cached_first"]
     out, seen, seen_file = [], set(), {}
     for release, info_hash, size, cached, context in fields:
         if not (release and info_hash) or info_hash in seen:
@@ -198,7 +257,7 @@ def candidates(kind, imdb, season=None, episode=None, other_episode=None):
         # A cached release plays now; an uncached one has to download first, and
         # Real-Debrid can spend minutes just resolving the magnet. That is worth
         # more than a few points of picture quality, so it sorts first.
-        rank_pts = None if pts is None else pts + (400 if cached else 0)
+        rank_pts = None if pts is None else pts + (400 if cached and cached_first else 0)
         out.append({"release": release, "hash": info_hash, "size": size,
                     "cached": cached, "score": pts, "rank": rank_pts, "mbps": mbps,
                     "pack": info_hash in packs,
@@ -212,10 +271,10 @@ def candidates(kind, imdb, season=None, episode=None, other_episode=None):
 
 
 RDSERVE = os.environ.get("RDSERVE_URL", "http://rdserve:8080")
-# How many subtitles to keep per language. Sync depends on which rip a subtitle
-# was timed to, and its name only hints at that, so keep several and let the
-# player's menu be the second opinion — the way Stremio lists them.
-SUBS_PER_LANG = 5
+# Several subtitles are kept per language (settings: subs_per_lang). Sync
+# depends on which rip a subtitle was timed to, and its name only hints at
+# that, so keep several and let the player's menu be the second opinion — the
+# way Stremio lists them.
 
 
 def subtitles(kind, imdb, season=None, episode=None, file_hash=None):
@@ -281,13 +340,14 @@ def sub_score(sub, release):
     return pts
 
 
-def pick_subtitles(subs, release, lang, n=SUBS_PER_LANG):
+def pick_subtitles(subs, release, lang, n=None):
     """The n best-fitting subtitles in one language, best first.
 
     One per source rip where possible: five uploads timed to the same WEBRip
     are five copies of the same drift, not five second opinions. Duplicates
     only fill in when there are not enough distinct rips.
     """
+    n = n or settings()["subs_per_lang"]
     ranked = sorted((s for s in subs if s.get("lang") == lang),
                     key=lambda s: -sub_score(s, release))
     out, seen_rip, seen_id = [], set(), set()
@@ -383,7 +443,10 @@ def clean_srt(raw):
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         text = raw.decode("cp1254", "replace")
-    if any(m in text for m in ("Ã", "Å", "Ä")):        # Turkish never uses these
+    # Mojibake signature: UTF-8 lead bytes read as Latin letters. A real "Ä" in
+    # German text is followed by ASCII, which fails the UTF-8 decode below and
+    # leaves the file untouched.
+    if any(m in text for m in ("Ã", "Å", "Ä")):
         try:
             text = _unmangle(text)
         except (UnicodeEncodeError, UnicodeDecodeError):
@@ -473,13 +536,13 @@ def order_saved(files):
 
 
 def auto_subtitles(kind, imdb, release, folder, season=None, episodes=()):
-    """Save the best-fitting Turkish and English SRTs for a freshly picked title.
+    """Save the best-fitting SRTs, in the configured languages, for a fresh pick.
 
     The PS5 plays a sidecar SRT for free, but selecting an embedded image
-    subtitle forces a full re-encode of the video, so both languages are always
-    put on disk. Several per language, numbered best-first: Plex shows them as
-    identical "Türkçe (SRT External)" entries in that order, so if the first is
-    out of sync the next one down is the second opinion. For a show this runs
+    subtitle forces a full re-encode of the video, so every configured language
+    is put on disk. Several per language, numbered best-first: Plex shows them
+    as identical "English (SRT External)" entries in that order, so if the first
+    is out of sync the next one down is the second opinion. For a show this runs
     once per episode the season torrent holds. Runs in the background after the
     pick; the librarian places the files as they land.
     """
@@ -498,7 +561,7 @@ def auto_subtitles(kind, imdb, release, folder, season=None, episodes=()):
         except Exception as e:
             print(f"[picker] subtitles lookup failed for {label} E{ep}: {e}", flush=True)
             continue
-        for lang in PREFERRED_LANGS:
+        for lang in settings()["subtitle_langs"]:
             got = []
             for s in pick_subtitles(subs, release, lang):
                 try:
@@ -653,9 +716,10 @@ class Handler(BaseHTTPRequestHandler):
         have = {p.name for p in SUBS_DIR.glob(f"{imdb}*.srt")} if SUBS_DIR.exists() else set()
         subs = subtitles(kind, imdb, season, episode)
         rows = []
-        langs = list(PREFERRED_LANGS) + sorted({s.get("lang", "?") for s in subs} - set(PREFERRED_LANGS))
+        pref = settings()["subtitle_langs"]
+        langs = list(pref) + sorted({s.get("lang", "?") for s in subs} - set(pref))
         for lang in langs:
-            picked = pick_subtitles(subs, release, lang, n=8 if lang in PREFERRED_LANGS else 3)
+            picked = pick_subtitles(subs, release, lang, n=8 if lang in pref else 3)
             if not picked:
                 continue
             rows.append(f"<h3>{html.escape(lang)}</h3>")
@@ -679,11 +743,65 @@ class Handler(BaseHTTPRequestHandler):
                     f"<input type='hidden' name='season' value='{season or ''}'>"
                     f"<input type='hidden' name='episode' value='{episode or ''}'>"
                     f"<button>use</button></form></div>")
-        note = ("<p class='meta'>Picking a movie already saves the five best-fitting Turkish and "
-                "English files; in the PS5 player they appear in that order, so if the first "
-                "is out of sync try the next one. Use this page to add a specific one.</p>")
+        note = (f"<p class='meta'>Picking a title already saves the best-fitting files in "
+                f"{html.escape(', '.join(pref))}; in the player they appear in that order, so if "
+                f"the first is out of sync try the next one. Use this page to add a specific one.</p>")
         return self._send(page(f"subtitles — {title}", note + ("".join(rows) or
                           "<p class='meta'>None found.</p>")))
+
+    def settings_page(self, q):
+        s = settings()
+        plex = q.get("plex", [""])[0]
+        note = ""
+        if plex:
+            note = (f"<p class='meta'>saved &middot; Plex default language: "
+                    f"<b>{'updated' if plex == 'ok' else html.escape(plex)}</b></p>")
+
+        def opt(name, choices, current):
+            return "".join(f"<option value='{v}'{' selected' if v == current else ''}>{label}</option>"
+                           for v, label in choices)
+
+        env = {"SCRAPER_URL": (poller.SCRAPER or "not set").split("/")[2] if "//" in poller.SCRAPER else (poller.SCRAPER or "not set"),
+               "WATCHLIST_INTERVAL": poller.INTERVAL, "AUTO_FETCH": int(poller.AUTO_FETCH),
+               "MAX_PER_TITLE": poller.MAX_PER_TITLE, "PLEX_URL": PLEX_URL,
+               "PLEX_TOKEN": "set" if PLEX_TOKEN else "missing", "RD_TOKEN": "set" if poller.RD_TOKEN else "missing"}
+        env_rows = "".join(f"<div class='item'><div class='grow'><div class='name'>{k}</div>"
+                           f"<div class='meta'>{html.escape(str(v))}</div></div></div>" for k, v in env.items())
+        body = f"""{note}
+<form method='post' action='/settings' class='settings'>
+<h3>Subtitles</h3>
+<div class='item'><div class='grow'><div class='name'>Languages, in order</div>
+<div class='meta'>ISO 639-2 codes as OpenSubtitles uses them: tur, eng, ger, fre, spa, por, ita, rus, jpn, kor, chi, ara …
+The first becomes Plex's default subtitle language.</div></div>
+<input type='text' name='subtitle_langs' value='{html.escape(", ".join(s["subtitle_langs"]))}'></div>
+<div class='item'><div class='grow'><div class='name'>Alternatives per language</div>
+<div class='meta'>Saved best-fit first; Plex lists them in that order, so the next one down is the second opinion.</div></div>
+<input type='number' name='subs_per_lang' min='1' max='8' value='{s["subs_per_lang"]}'></div>
+<div class='item'><div class='grow'><div class='name'>Fetch automatically on every pick</div></div>
+<label><input type='checkbox' name='auto_subtitles'{' checked' if s["auto_subtitles"] else ''}> on</label></div>
+<div class='item'><div class='grow'><div class='name'>Plex subtitle mode</div>
+<div class='meta'>How Plex turns subtitles on by itself for this account.</div></div>
+<select name='subtitle_mode'>{opt("subtitle_mode", [("2", "always on"), ("1", "only when the audio is foreign"), ("0", "manual")], str(s["subtitle_mode"]))}</select></div>
+<h3>Audio</h3>
+<div class='item'><div class='grow'><div class='name'>Audio track</div>
+<div class='meta'>"original" keeps each file's own default track. A language code makes Plex prefer that language when the file has it — and the picker still ranks dubbed releases down.</div></div>
+<input type='text' name='audio' value='{html.escape(s["audio"])}'></div>
+<h3>Ranking</h3>
+<div class='item'><div class='grow'><div class='name'>Highest resolution to prefer</div>
+<div class='meta'>Anything above it still shows, ranked down. Use it on a slow link or a 1080p TV.</div></div>
+<select name='max_resolution'>{opt("max_resolution", [("any", "any (4K first)"), ("1080p", "1080p"), ("720p", "720p")], s["max_resolution"])}</select></div>
+<div class='item'><div class='grow'><div class='name'>HDR</div>
+<div class='meta'>"avoid" for an SDR-only TV: HDR passes through untouched and would look washed out there.</div></div>
+<select name='hdr'>{opt("hdr", [("prefer", "prefer"), ("neutral", "neutral"), ("avoid", "avoid")], s["hdr"])}</select></div>
+<div class='item'><div class='grow'><div class='name'>Cached releases first</div>
+<div class='meta'>Releases already at Real-Debrid start instantly; others download first.</div></div>
+<label><input type='checkbox' name='cached_first'{' checked' if s["cached_first"] else ''}> on</label></div>
+<p><button>save</button></p>
+</form>
+<h3>From .env (read-only)</h3>
+<p class='meta'>Tokens, the scraper and the intervals are environment, not preferences: change them in <code>.env</code> and restart.</p>
+{env_rows}"""
+        return self._send(page("settings", body))
 
     # ---- actions --------------------------------------------------------
     def do_POST(self):
@@ -719,9 +837,29 @@ class Handler(BaseHTTPRequestHandler):
                 # Not downloaded yet, so Real-Debrid has no file list. Assume the
                 # pack holds the aired season; extra subtitles are harmless.
                 episodes = poller.aired_episodes(imdb).get(season, [])
-            threading.Thread(target=auto_subtitles, daemon=True,
-                             args=(kind, imdb, folder, folder, season, episodes)).start()
+            if settings()["auto_subtitles"]:
+                threading.Thread(target=auto_subtitles, daemon=True,
+                                 args=(kind, imdb, folder, folder, season, episodes)).start()
             return self._redirect("/")
+
+        if self.path == "/settings":
+            cur = settings()
+            langs = [l for l in re.split(r"[^a-z]+", form.get("subtitle_langs", [""])[0].lower()) if l]
+            cur["subtitle_langs"] = [l for l in langs if len(l) == 3] or DEFAULTS["subtitle_langs"]
+            cur["subs_per_lang"] = max(1, min(8, int(form.get("subs_per_lang", ["5"])[0] or 5)))
+            cur["auto_subtitles"] = "auto_subtitles" in form
+            cur["subtitle_mode"] = int(form.get("subtitle_mode", ["2"])[0])
+            audio = form.get("audio", ["original"])[0].strip().lower()
+            cur["audio"] = audio if re.fullmatch(r"[a-z]{3}", audio) else "original"
+            cur["max_resolution"] = form.get("max_resolution", ["any"])[0]
+            cur["hdr"] = form.get("hdr", ["prefer"])[0]
+            cur["cached_first"] = "cached_first" in form
+            save_settings(cur)
+            try:
+                plex = push_plex_defaults(cur)
+            except Exception as e:
+                plex = f"{type(e).__name__}: {e}"
+            return self._redirect(f"/settings?plex={urllib.parse.quote(plex)}")
 
         if self.path == "/addsub":
             season = form.get("season", [""])[0]
@@ -749,6 +887,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.pick(urllib.parse.parse_qs(parsed.query))
             if parsed.path == "/subs":
                 return self.subs(urllib.parse.parse_qs(parsed.query))
+            if parsed.path == "/settings":
+                return self.settings_page(urllib.parse.parse_qs(parsed.query))
         except Exception as e:
             return self._send(page("error", f"<pre>{html.escape(str(e))}</pre>"), 500)
         self.send_error(404)

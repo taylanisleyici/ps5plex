@@ -4,13 +4,12 @@ Watch your Real-Debrid library on the PS5, served from this Mac.
 
 | What | Where |
 |---|---|
-| **Source picker** (phone or Mac) | **http://192.168.3.20:8099** |
-| Plex web | http://192.168.3.20:32400/web |
+| **Source picker** (phone or Mac) | **http://\<mac-ip\>:8099** |
+| Plex web | http://\<mac-ip\>:32400/web |
 | Plex on the PS5 | sign in to the same Plex account |
 
-Those use this Mac's current LAN address. If your router hands it a different
-one, find it with `ipconfig getifaddr en0` and update `PLEX_ADVERTISE_URL` in
-`.env`. A DHCP reservation on the router avoids the problem entirely.
+`<mac-ip>` is this Mac's LAN address: `ipconfig getifaddr en0`. Put it in
+`PLEX_ADVERTISE_URL` in `.env`; a DHCP reservation on the router keeps it stable.
 
 ```
 Real-Debrid --> rdserve (HTTP) --> rclone mount --> librarian --> Plex --> PS5
@@ -73,7 +72,7 @@ Nothing runs in the background. You start it when you want to watch something an
 
 ## Choosing what to watch
 
-Open **http://localhost:8099** on this Mac, or **http://192.168.3.20:8099** from
+Open **http://localhost:8099** on this Mac, or **http://\<mac-ip\>:8099** from
 your phone — it is on your LAN already, nothing extra to host.
 
 Releases already cached at Real-Debrid are listed **first** and marked
@@ -101,10 +100,10 @@ Stremio's stream list, and nothing is fetched behind your back.
 
 The same page lists what is currently in your library, with a remove button.
 
-Picking a movie also saves the **five best-fitting Turkish and five English SRT**
-files from OpenSubtitles automatically, as sidecars next to the video:
-`Backrooms (2026).1.tur.srt` … `.5.tur.srt` beside `Backrooms (2026).mkv`. Plex
-lists each as "Türkçe (SRT External)", in that order, so if the first is out of
+Picking a movie also saves the **five best-fitting SRT files per language** you
+chose in settings, from OpenSubtitles, as sidecars next to the video:
+`Backrooms (2026).1.eng.srt` … `.5.eng.srt` beside `Backrooms (2026).mkv`. Plex
+lists each as "English (SRT External)", in that order, so if the first is out of
 sync the next one down is the second opinion — the way Stremio lists them.
 
 "Best-fitting" means timed to a rip like yours. OpenSubtitles records which
@@ -131,20 +130,14 @@ forced-only and goes last. A file on a different timing is never promoted.
 
 **Default subtitle language lives on the server, not on plex.tv.** The Account
 → Language page at plex.tv does not reach the server's auto-select; the server
-keeps its own per-user copy, which starts as English / manual. Set it once:
-
-```
-curl -X PUT "http://localhost:32400/accounts/1?defaultSubtitleLanguage=tur&subtitleMode=2&defaultAudioLanguage=und&autoSelectAudio=0&X-Plex-Token=$PLEX_TOKEN"
-```
-
-(`subtitleMode` 2 = always enabled, 1 = only with foreign audio, 0 = manual.)
-Audio is deliberately `und` (undetermined) with auto-select off: Plex has no
-"original language" choice, and this keeps each file's default track, which is
-the original on any proper release. Do not send an empty value — the server
-silently fills it with the subtitle language, which would pick a Turkish dub.
-The picker already ranks dubbed releases down.
-It persists in the server database. There is no secondary language; save both
-Turkish and English and switch in the player when a title has no Turkish.
+keeps its own per-user copy, which starts as English / manual. The settings
+page writes it for you (`PUT /accounts/1`). "Original" audio is sent as `und`
+with auto-select off: Plex has no "original language" choice, and this keeps
+each file's default track. An empty value must never be sent — the server
+silently fills it with the subtitle language, which would pick a dub.
+It persists in the server database. Plex has no secondary subtitle language:
+list two in settings, both get saved, and you switch in the player when a title
+has none in the first.
 
 Files are normalised to UTF-8 on save. OpenSubtitles hands out Windows-1254
 files and, worse, UTF-8 that was mangled through Windows-1252 upstream
@@ -157,6 +150,21 @@ torrents for a single show.
 
 Taking a title off your Watchlist removes it from the library on the next pass.
 The torrent stays in your Real-Debrid account; only the library forgets it.
+
+## Settings
+
+The picker has a **settings** page (top right) for everything that is a
+preference rather than a credential: subtitle languages and how many
+alternatives to keep, whether to fetch them on every pick, Plex's subtitle mode,
+the audio track (the file's original, or a language), the highest resolution to
+prefer, HDR preference for SDR-only TVs, and whether cached releases sort first.
+
+Saving writes `settings.json` on the state volume and pushes the language
+choices into Plex's per-user default, so the PS5 app follows them without any
+menu work. The defaults in the repo are plain — English subtitles, original
+audio, 4K first — so nothing here is tuned to one household; the file is what
+makes an install yours. Tokens, the scraper and the intervals stay in `.env`
+and are shown read-only on the page.
 
 ## The watchlist robot
 

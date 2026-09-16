@@ -44,7 +44,7 @@ services:
     security_opt:
       - apparmor:unconfined
     environment:
-      TZ: ${TZ:-Europe/Istanbul}
+      TZ: ${TZ:-UTC}
       VERSION: docker
       # Only needed on the very first run — get one at https://plex.tv/claim
       # (it expires 4 minutes after you generate it).

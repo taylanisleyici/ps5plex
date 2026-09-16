@@ -277,39 +277,31 @@ start the console cannot drain. rclone also reads with a 256 MB buffer and
 rdserve caches Real-Debrid's download links instead of re-authorising every
 chunk, both to smooth the feed.
 
-## Codecs: why the library prefers 1080p x264
+## Codecs: what the PS5 app actually plays
 
-The PS5 decodes 4K HEVC fine — it plays 4K UHD Blu-rays. But **Plex's PS5 profile
-only accepts HEVC inside MP4**, and torrents are MKV. For H.264, Plex does a nearly
-free MKV→MP4 container swap. For HEVC it refuses, and falls back to a full re-encode.
+Measured on this server with Plex for PlayStation 5 (app 5.94.3, server 1.43.4),
+reading the server's `MDE:` decision lines. The app never direct plays; it always
+asks for DASH, and Plex remuxes into fragmented MP4. Inside that remux:
 
-| Release | What Plex does | Cost |
+| Stream | Plex decision | Cost |
 |---|---|---|
-| 1080p **x264** MKV | Direct Stream (container swap) | ~nothing |
-| 1080p x265 MKV | full re-encode → 1080p H.264 | moderate |
-| 2160p x265 HDR MKV | re-encode + software HDR→SDR tonemap | brutal |
+| H.264 video, MKV | `copy` | ~nothing |
+| **HEVC 2160p DV/HDR10 video, MKV** | **`copy`** (3840×2160 passed through) | ~nothing |
+| AAC / AC3 / EAC3 audio | `copy` | nothing |
+| DTS / DTS-HD / TrueHD audio | `transcode` → AAC 5.1 | trivial |
 
-4K is a *downgrade* here: it gets re-encoded down to 1080p for the PS5 anyway, with
-HDR flattened to SDR. A 1080p x264 release usually looks better and costs nothing.
+So the old belief that HEVC needs to be inside MP4, and that 4K therefore costs a
+software re-encode plus tonemap, is wrong for this app. A 2160p x265 remux plays
+as a pure copy with the CPU idle. HDR10 metadata survives the copy; the Dolby
+Vision enhancement layer most likely does not, leaving HDR10.
 
-### Measured on this machine
+The only full video transcode observed came from the *app itself*: after a stall
+it retries with `directStream=0`, which forces libx264 at up to 20 Mbps. Feed it
+without stalls and that never happens.
 
-Play one of each from the PS5 and watch **Plex → Dashboard → Now Playing**, which
-reports Direct Play / Direct Stream / Transcode per stream. Record results here:
-
-Good candidates already in this library:
-
-| Test file | Expected | Actual | Holds realtime? |
-|---|---|---|---|
-| `Ted.2012...x264.YIFY.mp4` | Direct **Play** (MP4+x264) | _todo_ | |
-| `Conclave 2024 ...H264...mkv` | Direct **Stream** (remux) | _todo_ | |
-| any 1080p x265 (most of the library) | Transcode | _todo_ | |
-| a 2160p x265 | Transcode | _todo_ | |
-
-This library is 47/87 x265 and only 8/87 x264, so most existing titles will
-transcode. That is what the watchlist robot's x264 preference is for.
-
-This decides whether 4K stays in the watchlist robot's fallback ladder.
+`librarian/rank.py` still scores 1080p x264 above 2160p x265 and docks HDR, on
+the now-disproved transcode assumption. The picker lists everything either way,
+so pick what you want; the order is only a default.
 
 ## Troubleshooting
 

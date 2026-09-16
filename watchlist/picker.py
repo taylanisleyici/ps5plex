@@ -225,21 +225,38 @@ def sub_score(sub, release):
     mine, theirs = family(release), family(name)
     if mine and theirs:
         pts += 40 if mine == theirs else -40
-    pts += 8 * len(tokens(release) & tokens(name))
+    pts += 8 * len({t for t in tokens(release) & tokens(name) if len(t) > 1})
+    # ponytail: film is 23.976 fps almost without exception; 25 (PAL) and 30/60
+    # timings drift within minutes, 24 is usually a DCP or telesync source.
+    # Replace with the real frame rate from Plex if a title ever proves otherwise.
+    fps = sub.get("fpsMilli") or 0
+    if fps == 23976:
+        pts += 15
+    elif fps in (25000, 29970, 30000, 50000, 59940, 60000):
+        pts -= 15
     return pts
 
 
 def pick_subtitles(subs, release, lang, n=SUBS_PER_LANG):
-    """The n best-fitting subtitles in one language, best first, no duplicates."""
-    out, seen = [], set()
-    for s in sorted((s for s in subs if s.get("lang") == lang),
-                    key=lambda s: -sub_score(s, release)):
-        if s.get("id") in seen:
-            continue
-        seen.add(s.get("id"))
-        out.append(s)
-        if len(out) == n:
-            break
+    """The n best-fitting subtitles in one language, best first.
+
+    One per source rip where possible: five uploads timed to the same WEBRip
+    are five copies of the same drift, not five second opinions. Duplicates
+    only fill in when there are not enough distinct rips.
+    """
+    ranked = sorted((s for s in subs if s.get("lang") == lang),
+                    key=lambda s: -sub_score(s, release))
+    out, seen_rip, seen_id = [], set(), set()
+    for distinct_only in (True, False):
+        for s in ranked:
+            rip = (s.get("movieReleaseName") or s.get("subtitleFileName") or "").lower()
+            if s.get("id") in seen_id or (distinct_only and rip in seen_rip):
+                continue
+            seen_id.add(s.get("id"))
+            seen_rip.add(rip)
+            out.append(s)
+            if len(out) == n:
+                return out
     return out
 
 

@@ -89,23 +89,31 @@ def link(src, dst):
 
 
 def place_subtitles(imdb, dst, season=None, episode=None):
-    """Copy any downloaded subtitles next to the video file.
+    """Copy any downloaded subtitles next to the video file. Returns their paths.
 
     Plex reads "Name.tur.srt" sitting beside "Name.mkv" as a selectable Turkish
-    track. A sidecar file is far more reliable than whatever a release embedded,
-    and the PS5 client handles it better than image-based subtitles.
+    track, and "Name.2.tur.srt" as a second one. A sidecar file is far more
+    reliable than whatever a release embedded, and the PS5 client handles it
+    better than image-based subtitles.
+
+    Source names are "<imdb>[.sXXeYY][.<n>].<lang>.srt"; the optional middle
+    part is kept so several per language can coexist.
     """
+    placed = set()
     if not SUBS_DIR.exists():
-        return 0
+        return placed
     tag = f".s{int(season):02d}e{int(episode):02d}" if season and episode else ""
-    placed = 0
-    for src in SUBS_DIR.glob(f"{imdb}{tag}.*.srt"):
-        lang = src.name[:-len(".srt")].rsplit(".", 1)[-1]
-        target = dst.with_suffix("").with_suffix(f".{lang}.srt")
+    prefix = f"{imdb}{tag}."
+    base = str(dst)[:-len(dst.suffix)]           # not with_suffix: "Mr. Robot" has a dot
+    for src in SUBS_DIR.glob(f"{prefix}*.srt"):
+        rest = src.name[len(prefix):-len(".srt")]        # "<n>.<lang>" or "<lang>"
+        if tag == "" and rest.startswith("s") and "e" in rest.split(".")[0]:
+            continue                                     # an episode file, not this movie's
+        target = pathlib.Path(f"{base}.{rest}.srt")
         try:
             if not target.exists() or target.read_bytes() != src.read_bytes():
                 target.write_bytes(src.read_bytes())
-            placed += 1
+            placed.add(target)
         except OSError:
             continue
     return placed
@@ -173,8 +181,8 @@ def main():
                 created += link(src, dst)
                 if imdb:
                     parsed = guessit(dst.name, {"type": "episode"})
-                    place_subtitles(imdb, dst, _first(parsed.get("season")),
-                                    _first(parsed.get("episode")))
+                    wanted |= place_subtitles(imdb, dst, _first(parsed.get("season")),
+                                              _first(parsed.get("episode")))
             continue
 
         # Movies compete: several torrents can be the same film in different
@@ -207,14 +215,17 @@ def main():
             wanted.add(dst)
             created += link(src, dst)
             if imdb:
-                subs_placed += place_subtitles(imdb, dst)
+                placed = place_subtitles(imdb, dst)
+                subs_placed += len(placed)
+                wanted |= placed
 
-    # Drop links for torrents that are gone from Real-Debrid.
+    # Drop links for torrents that are gone from Real-Debrid, and sidecars whose
+    # source is gone (a new pick replaces the subtitle set along with the video).
     removed = 0
     for path in TARGET.rglob("*"):
-        if path.suffix == ".srt":
-            continue                      # sidecars, placed not linked
-        if path.is_symlink() and path not in wanted:
+        if path in wanted:
+            continue
+        if path.is_symlink() or (path.is_file() and path.suffix == ".srt"):
             path.unlink()
             removed += 1
     for path in sorted(TARGET.rglob("*"), key=lambda p: -len(p.parts)):

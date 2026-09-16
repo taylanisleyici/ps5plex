@@ -171,6 +171,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if not path:
             return self._send_html(listing("titles", [(n, True) for n in sorted(tree)]))
+        if path == "refresh":
+            # The picker calls this right after adding a torrent, so the new
+            # folder is listable without waiting out the timer.
+            refresh()
+            return self._send_html("ok")
 
         folder, _, leaf = path.partition("/")
         if folder not in tree:

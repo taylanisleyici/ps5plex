@@ -91,12 +91,19 @@ Stremio's stream list, and nothing is fetched behind your back.
 
 The same page lists what is currently in your library, with a remove button.
 
-Picking a movie also saves the top **Turkish and English SRT** from OpenSubtitles
-automatically, as sidecar files next to the video: `Backrooms (2026).tur.srt`
-beside `Backrooms (2026).mkv`, which Plex reads as a selectable track. Each title
-also has a **subtitles** button to choose a different one; it lists what the same
-`subs5.strem.io` addon your Stremio already uses has, Turkish first — no API key.
-Shows still go through that button, one episode at a time.
+Picking a movie also saves the **five best-fitting Turkish and five English SRT**
+files from OpenSubtitles automatically, as sidecars next to the video:
+`Backrooms (2026).1.tur.srt` … `.5.tur.srt` beside `Backrooms (2026).mkv`. Plex
+lists each as "Türkçe (SRT External)", in that order, so if the first is out of
+sync the next one down is the second opinion — the way Stremio lists them.
+
+"Best-fitting" means timed to a rip like yours. OpenSubtitles records which
+release each subtitle was made for; the picker scores that against the torrent
+you picked (same source family — Blu-ray, web, TV — same group, same tags),
+throws out files timed to cam/telesync rips, and asks OpenSubtitles for exact
+matches by file hash when the torrent is already downloaded. Each title also has
+a **subtitles** button showing that ranking with the fit score, to add a
+specific one. Shows still go through that button, one episode at a time.
 
 Sidecar files are deliberate. Subtitles embedded in a release are often the wrong
 version, and image-based ones (PGS) cannot be rendered by the PS5 client at all —

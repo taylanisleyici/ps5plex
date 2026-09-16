@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import re
+import struct
 import threading
 import time
 import urllib.parse
@@ -22,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import requests
 
 import poller
-from rank import est_mbps, is_banned, score
+from rank import est_mbps, is_banned, score, tokens
 
 PORT = int(os.environ.get("PICKER_PORT", "8081"))
 SUBS_DIR = pathlib.Path(os.environ.get("SUBS_DIR", "/state/subs"))
@@ -166,25 +167,129 @@ def candidates(kind, imdb, season=None, episode=None):
     return out
 
 
-def subtitles(kind, imdb, season=None, episode=None):
-    """Available subtitles, preferred languages first."""
-    if kind == "show":
-        url = f"{SUBS_API}/subtitles/series/{imdb}:{season or 1}:{episode or 1}.json"
-    else:
-        url = f"{SUBS_API}/subtitles/movie/{imdb}.json"
-    r = requests.get(url, timeout=45, headers={"User-Agent": "Mozilla/5.0"})
+RDSERVE = os.environ.get("RDSERVE_URL", "http://rdserve:8080")
+# How many subtitles to keep per language. Sync depends on which rip a subtitle
+# was timed to, and its name only hints at that, so keep several and let the
+# player's menu be the second opinion — the way Stremio lists them.
+SUBS_PER_LANG = 5
+
+
+def subtitles(kind, imdb, season=None, episode=None, file_hash=None):
+    """Everything OpenSubtitles has for a title, via Stremio's addon.
+
+    `file_hash` is (hash, size) of the actual video file. Given that, the addon
+    also asks OpenSubtitles for uploads made against that exact file, which it
+    flags with m="h": those are in sync by definition.
+    """
+    what = (f"series/{imdb}:{season or 1}:{episode or 1}" if kind == "show"
+            else f"movie/{imdb}")
+    extra = f"/videoHash={file_hash[0]}&videoSize={file_hash[1]}" if file_hash else ""
+    r = requests.get(f"{SUBS_API}/subtitles/{what}{extra}.json", timeout=45,
+                     headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
-    subs = [s for s in r.json().get("subtitles", []) if s.get("url")]
-    def rank(s):
-        lang = s.get("lang", "")
-        return (PREFERRED_LANGS.index(lang) if lang in PREFERRED_LANGS else 99, lang)
-    return sorted(subs, key=rank)
+    return [s for s in r.json().get("subtitles", []) if s.get("url")]
 
 
-def sub_path(imdb, lang, season=None, episode=None):
-    """Where a downloaded subtitle lives until the librarian places it."""
+# Blu-ray, web and TV rips are different cuts with different timings, so a
+# subtitle timed to one family is the wrong one for another.
+SOURCE_FAMILY = {"remux": "bluray", "bluray": "bluray", "blu": "bluray", "bdrip": "bluray",
+                 "brrip": "bluray", "uhd": "bluray", "web": "web", "webdl": "web",
+                 "webrip": "web", "amzn": "web", "nf": "web", "dsnp": "web", "atvp": "web",
+                 "hmax": "web", "hdtv": "hdtv", "dcprip": "dcp"}
+
+
+def family(name):
+    toks = tokens(name)
+    return next((f for t, f in SOURCE_FAMILY.items() if t in toks), None)
+
+
+def sub_score(sub, release):
+    """How likely a subtitle is to be in sync with the picked release.
+
+    OpenSubtitles records which rip each file was timed to (movieReleaseName).
+    A hash match is certain. Otherwise, the closer that name is to ours — same
+    source family, same group, same tags — the better the odds. A subtitle
+    timed to a cam or telesync is timed to a different film, effectively.
+    """
+    if sub.get("m") == "h":
+        return 1000
+    name = f"{sub.get('movieReleaseName', '')} {sub.get('subtitleFileName', '')}"
+    pts = 0
+    if is_banned(name):
+        pts -= 500
+    low = name.lower()
+    if "forced" in low:
+        pts -= 300               # only the foreign-language lines
+    if "sdh" in low or "hearing" in low:
+        pts -= 5
+    mine, theirs = family(release), family(name)
+    if mine and theirs:
+        pts += 40 if mine == theirs else -40
+    pts += 8 * len(tokens(release) & tokens(name))
+    return pts
+
+
+def pick_subtitles(subs, release, lang, n=SUBS_PER_LANG):
+    """The n best-fitting subtitles in one language, best first, no duplicates."""
+    out, seen = [], set()
+    for s in sorted((s for s in subs if s.get("lang") == lang),
+                    key=lambda s: -sub_score(s, release)):
+        if s.get("id") in seen:
+            continue
+        seen.add(s.get("id"))
+        out.append(s)
+        if len(out) == n:
+            break
+    return out
+
+
+def sub_path(imdb, lang, season=None, episode=None, n=None):
+    """Where a downloaded subtitle lives until the librarian places it.
+
+    "<imdb>[.sXXeYY][.<n>].<lang>.srt". The librarian carries the middle part
+    into the sidecar's name, so several per language can sit beside one video.
+    """
     tag = f".s{int(season):02d}e{int(episode):02d}" if season and episode else ""
-    return SUBS_DIR / f"{imdb}{tag}.{lang}.srt"
+    mid = f".{n}" if n is not None else ""
+    return SUBS_DIR / f"{imdb}{tag}{mid}.{lang}.srt"
+
+
+def video_hash(folder):
+    """OpenSubtitles hash of the picked torrent's biggest video, via rdserve.
+
+    Size plus the first and last 64 KB summed as little-endian uint64s. Two
+    ranged GETs against Real-Debrid's CDN, ~128 KB in total. None when the
+    torrent is not downloaded yet or anything else goes wrong; the name-based
+    ranking still runs without it.
+    """
+    try:
+        requests.get(f"{RDSERVE}/refresh", timeout=60)     # it lists only what it has seen
+        base = f"{RDSERVE}/{urllib.parse.quote(folder)}/"
+        r = requests.get(base, timeout=15)
+        if r.status_code != 200:
+            return None
+        best = None
+        for href in re.findall(r'href="([^"]+)"', r.text):
+            h = requests.get(base + href, headers={"Range": "bytes=0-0"}, timeout=30, stream=True)
+            total = int((h.headers.get("Content-Range") or "/0").rsplit("/", 1)[-1] or 0) \
+                or (int(h.headers.get("Content-Length", 0)) if h.status_code == 200 else 0)
+            h.close()
+            if best is None or total > best[1]:
+                best = (href, total)
+        if not best or best[1] < 131072:
+            return None
+        href, size = best
+
+        def chunk(rng):
+            data = requests.get(base + href, headers={"Range": rng}, timeout=60).content[:65536]
+            return sum(struct.unpack("<%dQ" % (len(data) // 8), data[:len(data) // 8 * 8]))
+
+        digest = (size + chunk("bytes=0-65535")
+                  + chunk(f"bytes={size - 65536}-{size - 1}")) & 0xFFFFFFFFFFFFFFFF
+        return "%016x" % digest, size
+    except Exception as e:
+        print(f"[picker] no file hash for {folder[:50]}: {e}", flush=True)
+        return None
 
 
 def clean_srt(raw):
@@ -226,38 +331,41 @@ def _unmangle(text):
     return out.decode("utf-8")
 
 
-def save_subtitle(url, imdb, lang, season=None, episode=None):
+def save_subtitle(url, imdb, lang, season=None, episode=None, n=None):
     r = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     SUBS_DIR.mkdir(parents=True, exist_ok=True)
-    path = sub_path(imdb, lang, season, episode)
+    path = sub_path(imdb, lang, season, episode, n)
     path.write_bytes(clean_srt(r.content))
     return path
 
 
-def auto_subtitles(kind, imdb):
-    """Save the top Turkish and English SRT for a title as soon as it is picked.
+def auto_subtitles(kind, imdb, release, folder):
+    """Save the best-fitting Turkish and English SRTs for a freshly picked movie.
 
     The PS5 plays a sidecar SRT for free, but selecting an embedded image
-    subtitle forces a full re-encode of the video. Having both languages on
-    disk means the player's menu always has a safe choice.
+    subtitle forces a full re-encode of the video, so both languages are always
+    put on disk. Several per language, numbered best-first: Plex shows them as
+    identical "Türkçe (SRT External)" entries in that order, so if the first is
+    out of sync the next one down is the second opinion. Runs in the background
+    after the pick; the librarian places the files as they land.
     """
     try:
-        subs = subtitles(kind, imdb)
+        for old in SUBS_DIR.glob(f"{imdb}.*.srt"):
+            old.unlink()                         # timed to the previous pick
+        subs = subtitles(kind, imdb, file_hash=video_hash(folder))
     except Exception as e:
         print(f"[picker] subtitles lookup failed for {imdb}: {e}", flush=True)
         return
+    saved = 0
     for lang in PREFERRED_LANGS:
-        if sub_path(imdb, lang).exists():
-            continue
-        hit = next((s for s in subs if s.get("lang") == lang), None)
-        if not hit:
-            continue
-        try:
-            save_subtitle(hit["url"], imdb, lang)
-            print(f"[picker] saved {lang} subtitle for {imdb}", flush=True)
-        except Exception as e:
-            print(f"[picker] could not save {lang} subtitle for {imdb}: {e}", flush=True)
+        for n, s in enumerate(pick_subtitles(subs, release, lang), 1):
+            try:
+                save_subtitle(s["url"], imdb, lang, n=n)
+                saved += 1
+            except Exception as e:
+                print(f"[picker] could not save {lang} #{n} for {imdb}: {e}", flush=True)
+    print(f"[picker] {saved} subtitle file(s) saved for {imdb}", flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -376,26 +484,41 @@ class Handler(BaseHTTPRequestHandler):
         season = int(season) if season else None
         episode = int(episode) if episode else None
 
+        # Score against the picked release, so the list reads best-fit first.
+        managed = poller.load_managed()
+        release = next((f for f, v in managed.items() if v.get("imdb") == imdb), "")
         have = {p.name for p in SUBS_DIR.glob(f"{imdb}*.srt")} if SUBS_DIR.exists() else set()
+        subs = subtitles(kind, imdb, season, episode)
         rows = []
-        for s in subtitles(kind, imdb, season, episode)[:40]:
-            lang = s.get("lang", "?")
-            target = sub_path(imdb, lang, season, episode).name
-            mark = " &middot; <b>saved</b>" if target in have else ""
-            rows.append(
-                f"<div class='item'><div class='grow'>"
-                f"<div class='name'><b>{html.escape(lang)}</b>"
-                + ("<span class='badge cached'>saved</span>" if target in have else "")
-                + f"</div><div class='meta'>{html.escape(s.get('id','')[:44])}</div></div>"
-                f"<form method='post' action='/addsub'>"
-                f"<input type='hidden' name='url' value='{html.escape(s['url'])}'>"
-                f"<input type='hidden' name='imdb' value='{imdb}'>"
-                f"<input type='hidden' name='lang' value='{html.escape(lang)}'>"
-                f"<input type='hidden' name='season' value='{season or ''}'>"
-                f"<input type='hidden' name='episode' value='{episode or ''}'>"
-                f"<button>use</button></form></div>")
-        note = ("<p class='meta'>Saved subtitles are placed next to the video file, so "
-                "Plex offers them as a selectable track on the PS5.</p>")
+        langs = list(PREFERRED_LANGS) + sorted({s.get("lang", "?") for s in subs} - set(PREFERRED_LANGS))
+        for lang in langs:
+            picked = pick_subtitles(subs, release, lang, n=8 if lang in PREFERRED_LANGS else 3)
+            if not picked:
+                continue
+            rows.append(f"<h3>{html.escape(lang)}</h3>")
+            for s in picked:
+                pts = sub_score(s, release)
+                saved = sub_path(imdb, lang, season, episode, f"m{s.get('id', '')}").name in have
+                fps = f"{s['fpsMilli'] / 1000:g} fps" if s.get("fpsMilli") else "fps ?"
+                rows.append(
+                    f"<div class='{'item' if pts > -100 else 'item bad'}'><div class='grow'>"
+                    f"<div class='name'>{html.escape((s.get('movieReleaseName') or s.get('subtitleFileName') or '?')[:100])}"
+                    + (" <span class='badge cached'>saved</span>" if saved else "")
+                    + (" <span class='badge cached'>exact file match</span>" if s.get("m") == "h" else "")
+                    + f"</div><div class='meta'>{fps} &middot; fit {pts}"
+                    + (" &middot; timed to a cam rip" if is_banned(s.get("movieReleaseName") or "") else "")
+                    + f"</div></div>"
+                    f"<form method='post' action='/addsub'>"
+                    f"<input type='hidden' name='url' value='{html.escape(s['url'])}'>"
+                    f"<input type='hidden' name='id' value='{html.escape(str(s.get('id', '')))}'>"
+                    f"<input type='hidden' name='imdb' value='{imdb}'>"
+                    f"<input type='hidden' name='lang' value='{html.escape(lang)}'>"
+                    f"<input type='hidden' name='season' value='{season or ''}'>"
+                    f"<input type='hidden' name='episode' value='{episode or ''}'>"
+                    f"<button>use</button></form></div>")
+        note = ("<p class='meta'>Picking a movie already saves the five best-fitting Turkish and "
+                "English files; in the PS5 player they appear in that order, so if the first "
+                "is out of sync try the next one. Use this page to add a specific one.</p>")
         return self._send(page(f"subtitles — {title}", note + ("".join(rows) or
                           "<p class='meta'>None found.</p>")))
 
@@ -423,13 +546,16 @@ class Handler(BaseHTTPRequestHandler):
             for folder in [f for f, v in managed.items()
                            if v.get("imdb") == form["imdb"][0] and v.get("season") == season]:
                 managed.pop(folder)
+            before = set(managed)
             poller._add_and_record(
                 (0, form["hash"][0], form["hash"][0]), form["title"][0], form["imdb"][0],
                 "", form["kind"][0], managed, season)
             # ponytail: movies only. A season pack needs one lookup per episode;
             # use the subtitles page for shows until that is wanted.
             if form["kind"][0] != "show":
-                auto_subtitles(form["kind"][0], form["imdb"][0])
+                folder = next(iter(set(managed) - before), form["hash"][0])
+                threading.Thread(target=auto_subtitles, daemon=True,
+                                 args=(form["kind"][0], form["imdb"][0], folder, folder)).start()
             return self._redirect("/")
 
         if self.path == "/addsub":
@@ -437,7 +563,8 @@ class Handler(BaseHTTPRequestHandler):
             episode = form.get("episode", [""])[0]
             save_subtitle(form["url"][0], form["imdb"][0], form["lang"][0],
                           int(season) if season else None,
-                          int(episode) if episode else None)
+                          int(episode) if episode else None,
+                          n=f"m{form.get('id', [''])[0]}")
             return self._redirect("/")
 
         if self.path == "/remove":

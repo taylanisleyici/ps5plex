@@ -1,5 +1,21 @@
 """Run inside the picker container: python3 test_picker.py"""
-from picker import clean_srt
+from picker import clean_srt, pick_subtitles, sub_score
+
+# --- which subtitle fits the picked release ---------------------------------
+RELEASE = "Project.Hail.Mary.2026.iNTERNAL.UHD.BluRay.2160p.TrueHD.Atmos.7.1.DV.HDR10.x265-SPx.mkv"
+TELESYNC = {"id": "1", "lang": "tur", "movieReleaseName": "Project Hail Mary.2026.1080p.TELESYNC.HC.x264-SyncUP"}
+WEBDL = {"id": "2", "lang": "tur", "movieReleaseName": "Project.Hail.Mary.2026.1080p.WEB-DL.DDP5.1.H264-Esub"}
+BLURAY = {"id": "3", "lang": "tur", "movieReleaseName": "Project.Hail.Mary.2026.1080p.BluRay.x264-SPARKS"}
+HASHED = {"id": "4", "lang": "tur", "m": "h", "movieReleaseName": "whatever"}
+FORCED = {"id": "5", "lang": "tur", "movieReleaseName": "Project.Hail.Mary.2026.1080p.BluRay.x264-Forced"}
+# the actual bug: the telesync-timed file was first in the list and got saved
+assert sub_score(TELESYNC, RELEASE) < sub_score(WEBDL, RELEASE) < sub_score(BLURAY, RELEASE)
+assert sub_score(HASHED, RELEASE) > sub_score(BLURAY, RELEASE)
+assert sub_score(FORCED, RELEASE) < sub_score(WEBDL, RELEASE)
+picked = pick_subtitles([TELESYNC, WEBDL, BLURAY, HASHED, FORCED, dict(BLURAY, lang="eng")], RELEASE, "tur", n=3)
+assert [s["id"] for s in picked] == ["4", "3", "2"], [s["id"] for s in picked]
+
+# --- encoding repair ---------------------------------------------------------
 
 # the actual Hail Mary file: UTF-8 read as cp1252 and re-saved as UTF-8
 assert clean_srt("KURTULUÅž PROJESÄ°".encode("utf-8")) == "KURTULUŞ PROJESİ".encode("utf-8")
@@ -12,4 +28,4 @@ assert clean_srt("İşte başlıyoruz.".encode("utf-8")) == "İşte başlıyoruz
 assert clean_srt("Çalış".encode("cp1254")) == "Çalış".encode("utf-8")
 # a BOM is dropped
 assert clean_srt(b"\xef\xbb\xbfTamam") == b"Tamam"
-print("ok — 6 assertions")
+print("ok — 10 assertions")

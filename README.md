@@ -87,9 +87,15 @@ being big, you decide what your link can carry. A filter bar narrows the list by
 text, resolution, codec, HDR and "plays now"; camera rips and releases dubbed
 into another language without the original audio are hidden unless you ask for
 them. Each row shows the scraper's audio-language flags. For a show, releases whose torrent holds the whole season are
-marked **season pack** and shown alone by default: the scraper never names the
-torrent, so a pack is recognised by its hash turning up for more than one
-episode of the season. One add of a pack brings every episode. Filters run in the page, so they are instant. Click one and only
+marked **season pack**, with a filter to show only those: the scraper never
+names the torrent, so a pack is recognised by its hash turning up for more than
+one episode of the season. One add of a pack brings every episode. The filter
+is off by default because the packs on offer are often a season's worst rips.
+
+Ranking follows what a careful eye does in Stremio: higher bitrate first at a
+given resolution, a signed release (`-GROUP`) over an unsigned one, and rips
+branded by a betting sponsor (1xbet, Dragon Money, …) treated like camera
+recordings — those are the ones with a floating advert burned into the picture. Filters run in the page, so they are instant. Click one and only
 that one is added; picking another source for the same title replaces it. Like
 Stremio's stream list, and nothing is fetched behind your back.
 

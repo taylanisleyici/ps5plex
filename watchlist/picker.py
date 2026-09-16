@@ -112,7 +112,7 @@ FILTER_BAR = """
     <option>x265</option><option>x264</option></select>
   <label><input type='checkbox' id='cached' onchange='apply()'> plays now</label>
   <label><input type='checkbox' id='hdr' onchange='apply()'> HDR</label>
-  <label><input type='checkbox' id='junk' onchange='apply()'> show cam / screener</label>
+  <label><input type='checkbox' id='junk' onchange='apply()'> show cam / ads</label>
   <label><input type='checkbox' id='dub' onchange='apply()'> show dubs</label>
   %s
 </div>
@@ -525,7 +525,7 @@ class Handler(BaseHTTPRequestHandler):
         rows = []
         for c in cands:
             cls = "item bad" if c["junk"] else ("item best" if not rows else "item")
-            badge = ("<span class='badge junk'>cam / screener</span>" if c["junk"]
+            badge = ("<span class='badge junk'>cam / ads</span>" if c["junk"]
                      else "<span class='badge cached'>&#9889; plays now</span>" if c["cached"]
                      else "<span class='badge uncached'>must download</span>")
             if c["pack"]:
@@ -554,10 +554,10 @@ class Handler(BaseHTTPRequestHandler):
                 f"<input type='hidden' name='season' value='{season if kind == 'show' else ''}'>"
                 f"<button>add</button></form></div>")
         body = ("".join(rows) or "<p class='meta'>No releases found.</p>")
-        # For a show, default to whole-season packs when there are any: one add
-        # brings every episode. The count line makes the narrowing visible.
+        # Off by default: the packs on offer are often the worst releases of a
+        # season, and defaulting to them once hid every clean single episode.
         pack_box = ("" if kind != "show" else
-                    f"<label><input type='checkbox' id='pack' onchange='apply()'{' checked' if packs else ''}>"
+                    f"<label><input type='checkbox' id='pack' onchange='apply()'>"
                     f" full season only ({packs})</label>")
         return self._send(page(title, head + FILTER_BAR % (pack_box, len(cands), ready) + body + FILTER_JS))
 

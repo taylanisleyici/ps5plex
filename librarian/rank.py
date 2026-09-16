@@ -13,7 +13,12 @@ import re
 
 # A camera recording is never acceptable. Scored as None = do not use at all.
 BANNED = ("cam", "camrip", "hdcam", "ts", "telesync", "hdts", "tc", "telecine",
-          "scr", "screener", "dvdscr", "r5", "workprint", "hdtc", "predvd")
+          "scr", "screener", "dvdscr", "r5", "workprint", "hdtc", "predvd",
+          # casino-sponsored rips: a floating betting banner burned into the picture
+          "1xbet", "melbet", "mostbet", "vavada", "betwinner", "casino", "1win", "fonbet")
+# Same, for sponsors whose name splits into innocent tokens ("Dragon Money" —
+# on a show called House of the Dragon). Matched on the dotted lowercase name.
+SPONSORED = ("dragon.money", "dragonmoney", "pin.up.", "leon.bet", "olimp.bet")
 
 RESOLUTION = {"2160p": 100, "1080p": 70, "720p": 30, "480p": 5}
 SOURCE_BONUS = {"remux": 30, "bluray": 25, "web-dl": 20, "webdl": 20, "webrip": 10, "hdtv": 0}
@@ -98,7 +103,18 @@ def tokens(name):
 
 
 def is_banned(name):
-    return bool(tokens(name) & set(BANNED))
+    flat = (name or "").lower().replace(" ", ".").replace("_", ".")
+    return bool(tokens(name) & set(BANNED)) or any(s in flat for s in SPONSORED)
+
+
+def has_group(name):
+    """Does the name end in a release-group tag: "...x265-ELiTE.mkv", "...[WD-13].mkv"?
+
+    Scene and P2P releases sign their work. The rips that carry burned-in
+    adverts are the ones named like a home recording, "Show.S03E01.mkv".
+    """
+    stem = re.sub(r"\.(mkv|mp4|avi|m4v|ts|mov|webm)$", "", name.strip(), flags=re.I)
+    return bool(re.search(r"-[A-Za-z0-9]{2,}$|\[[^\]]{2,}\]\)?$", stem))
 
 
 def flags(context):
@@ -208,10 +224,17 @@ def score(name, size_bytes=0, origin=None, context="", runtime_min=None):
     elif any(m in toks or m in flat for m in SOFTSUB_MARKERS):
         points -= 5
 
-    # Bigger is a little better, capped so size never outweighs codec or source.
-    points += min(size_bytes / (1024 ** 3), 20) * 0.5
-    # A "1080p" feature at 0.1 GB is a sample or the wrong title.
+    # An unsigned release is the tell for the junk that carries adverts.
+    if not has_group(name):
+        points -= 30
+
+    # Bitrate is picture quality: on this link a 9.7 GB episode beats a 2.3 GB
+    # one at the same resolution, and that is the order Stremio shows too.
     mbps = est_mbps(size_bytes, runtime_min)
-    if mbps is not None and mbps < 1.5:
-        points -= 100
+    if mbps is not None:
+        points += min(mbps, 25)
+        if mbps < 1.5:
+            points -= 100      # a "1080p" feature at 0.1 GB is a sample or the wrong title
+    else:
+        points += min(size_bytes / (1024 ** 3), 20) * 0.5    # no runtime: size as a proxy
     return points

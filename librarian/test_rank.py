@@ -82,6 +82,19 @@ def main():
     # but flags mean nothing when the original language is unknown
     assert score("Show.S03E01.1080p.mkv", context="🇬🇧") == score("Show.S03E01.1080p.mkv")
 
+    # the pack with the floating casino banner: unsigned, and its twin names the sponsor
+    from rank import has_group
+    assert has_group("House.of.the.Dragon.S03E01.1080p.x265-ELiTE.mkv")
+    assert has_group("House of the Dragon (2022) S03E01 720p hevc x265 [WD-13].mkv")
+    assert not has_group("House.of.the.Dragon.S03E01.mkv")
+    assert score("House.of.the.Dragon.S03E01.Dragon.Money.Studio.mkv") is None
+    assert score("Movie.2024.1080p.WEB-DL.x264-1XBET.mkv") is None
+    assert score("House.of.the.Dragon.S03E01.1080p.x265-ELiTE.mkv", 1_100_000_000, "en", runtime_min=60) > \
+           score("House.of.the.Dragon.S03E01.1080p.mkv", 4_600_000_000, "en", runtime_min=60)
+    # at equal resolution the higher bitrate wins, as in Stremio's own order
+    assert score("Show.S03E01.2160p.HDR.x265-Master5.mkv", 9_700_000_000, "en", runtime_min=60) > \
+           score("Show.S03E01.2160p.DV.HDR.x265.PROPER-Amen.mkv", 2_300_000_000, "en", runtime_min=60)
+
     from rank import origin_language
     assert origin_language("Japan") == "ja"
     assert origin_language("United States, Hong Kong") == "en"
@@ -99,7 +112,7 @@ def main():
     assert score("Film.2024.1080p.x264-GRP.mkv", 100 * 1024**2, "en", runtime_min=120) < \
            score("Film.2024.720p.x264-GRP.mkv", 3 * 1024**3, "en", runtime_min=120)
 
-    print("ok — 28 assertions")
+    print("ok — 35 assertions")
 
 
 if __name__ == "__main__":

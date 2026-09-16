@@ -113,6 +113,7 @@ FILTER_BAR = """
   <label><input type='checkbox' id='cached' onchange='apply()'> plays now</label>
   <label><input type='checkbox' id='hdr' onchange='apply()'> HDR</label>
   <label><input type='checkbox' id='junk' onchange='apply()'> show cam / screener</label>
+  %s
 </div>
 <p class='meta'>showing <b id='n'>0</b> of %d releases &middot; <b>%d</b> already cached at Real-Debrid</p>
 """
@@ -120,7 +121,8 @@ FILTER_BAR = """
 FILTER_JS = """
 <script>
 function apply(){
-  const v=id=>document.getElementById(id).value, on=id=>document.getElementById(id).checked;
+  const v=id=>document.getElementById(id).value,
+        on=id=>{const e=document.getElementById(id); return !!(e&&e.checked)};
   const q=v('q').toLowerCase(), res=v('res'), codec=v('codec');
   let n=0;
   document.querySelectorAll('.item[data-res]').forEach(el=>{
@@ -128,7 +130,7 @@ function apply(){
     const show=(!q||el.textContent.toLowerCase().includes(q))
       &&(!res||d.res===res)&&(!codec||d.codec===codec)
       &&(!on('cached')||d.cached==='1')&&(!on('hdr')||d.hdr==='1')
-      &&(on('junk')||d.junk!=='1');
+      &&(on('junk')||d.junk!=='1')&&(!on('pack')||d.pack==='1');
     el.hidden=!show; if(show)n++;
   });
   document.getElementById('n').textContent=n;
@@ -138,19 +140,36 @@ apply();
 """
 
 
-def candidates(kind, imdb, season=None, episode=None):
-    """Every usable release for a title, best first, with why."""
-    info = poller.title_info(kind, imdb)
-    origin, runtime = info["origin"], info["runtime_min"]
+def _streams(kind, imdb, season=None, episode=None):
     if kind == "show":
         url = f"{poller.SCRAPER}/stream/series/{imdb}:{season or 1}:{episode or 1}.json"
     else:
         url = f"{poller.SCRAPER}/stream/movie/{imdb}.json"
     r = requests.get(url, timeout=90, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
+    return r.json().get("streams", [])
+
+
+def candidates(kind, imdb, season=None, episode=None, other_episode=None):
+    """Every usable release for a title, best first, with why.
+
+    The scraper answers per episode and names only the file, never the torrent,
+    so a season pack looks exactly like a single episode. The one reliable tell
+    is that a pack's info hash comes back for every episode of the season: ask
+    for `other_episode` too and mark hashes that appear in both as packs.
+    """
+    info = poller.title_info(kind, imdb)
+    origin, runtime = info["origin"], info["runtime_min"]
+    streams = _streams(kind, imdb, season, episode)
+    packs = set()
+    if kind == "show" and other_episode:
+        try:
+            packs = {poller._stream_fields(s)[1] for s in _streams(kind, imdb, season, other_episode)}
+        except Exception as e:
+            print(f"[picker] could not check for season packs: {e}", flush=True)
 
     out, seen = [], set()
-    for s in r.json().get("streams", []):
+    for s in streams:
         release, info_hash, size, cached, context = poller._stream_fields(s)
         if not (release and info_hash) or info_hash in seen:
             continue
@@ -163,6 +182,7 @@ def candidates(kind, imdb, season=None, episode=None):
         rank_pts = None if pts is None else pts + (400 if cached else 0)
         out.append({"release": release, "hash": info_hash, "size": size,
                     "cached": cached, "score": pts, "rank": rank_pts, "mbps": mbps,
+                    "pack": info_hash in packs,
                     "junk": pts is None or is_banned(release) or is_banned(context)})
     out.sort(key=lambda c: (-1e9 if c["rank"] is None else -c["rank"]))
     return out
@@ -490,15 +510,22 @@ class Handler(BaseHTTPRequestHandler):
                 for e in schedule.get(season, []))
             head += f"<div class='tabs'>{seasons}</div><div class='tabs'>{eps}</div>"
 
-        cands = candidates(kind, imdb, season, episode)
+        other = None
+        if kind == "show":
+            aired = schedule.get(season, [])
+            other = next((e for e in reversed(aired) if e != episode), None)
+        cands = candidates(kind, imdb, season, episode, other)
         ready = sum(1 for c in cands if c["cached"] and not c["junk"])
+        packs = sum(1 for c in cands if c["pack"])
         rows = []
         for c in cands:
             cls = "item bad" if c["junk"] else ("item best" if not rows else "item")
             badge = ("<span class='badge junk'>cam / screener</span>" if c["junk"]
                      else "<span class='badge cached'>&#9889; plays now</span>" if c["cached"]
                      else "<span class='badge uncached'>must download</span>")
-            meta = [gb(c["size"])]
+            if c["pack"]:
+                badge += " <span class='badge cached'>season pack</span>"
+            meta = [gb(c["size"]) + (" per episode" if c["pack"] else "")]
             if c["mbps"]:
                 meta.append(f"~{c['mbps']:.0f} Mbps")
             if c["score"] is not None:
@@ -506,7 +533,8 @@ class Handler(BaseHTTPRequestHandler):
             res, codec, hdr = tags(c["release"])
             rows.append(
                 f"<div class='{cls}' data-res='{res}' data-codec='{codec}' data-hdr='{int(hdr)}'"
-                f" data-cached='{int(bool(c['cached']))}' data-junk='{int(c['junk'])}'>"
+                f" data-cached='{int(bool(c['cached']))}' data-junk='{int(c['junk'])}'"
+                f" data-pack='{int(c['pack'])}'>"
                 f"<div class='grow'><div class='name'>{html.escape(c['release'][:110])}</div>"
                 f"<div class='meta'>{badge} &middot; {' &middot; '.join(meta)}</div></div>"
                 f"<form method='post' action='/add'>"
@@ -517,7 +545,12 @@ class Handler(BaseHTTPRequestHandler):
                 f"<input type='hidden' name='season' value='{season if kind == 'show' else ''}'>"
                 f"<button>add</button></form></div>")
         body = ("".join(rows) or "<p class='meta'>No releases found.</p>")
-        return self._send(page(title, head + FILTER_BAR % (len(cands), ready) + body + FILTER_JS))
+        # For a show, default to whole-season packs when there are any: one add
+        # brings every episode. The count line makes the narrowing visible.
+        pack_box = ("" if kind != "show" else
+                    f"<label><input type='checkbox' id='pack' onchange='apply()'{' checked' if packs else ''}>"
+                    f" full season only ({packs})</label>")
+        return self._send(page(title, head + FILTER_BAR % (pack_box, len(cands), ready) + body + FILTER_JS))
 
     def subs(self, q):
         kind = q.get("kind", ["movie"])[0]

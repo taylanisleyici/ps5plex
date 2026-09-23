@@ -4,7 +4,7 @@ Two jobs. First, never surface a camera recording when a real source exists — 
 CAM is worthless no matter how good its resolution claims to be, and they often
 carry burned-in betting ads.
 
-Second, prefer the best picture. Measured on this server, the PS5 app copies
+Second, prefer the best picture. Measured with Plex for PS5 (app 5.94.3, server 1.43.4), the app copies
 both H.264 and 2160p HEVC HDR video straight through its DASH remux, so codec and
 HDR cost nothing; only DTS/TrueHD audio gets converted, which is trivial. Higher
 resolution and a cleaner source are what is left to rank on.

@@ -1,8 +1,8 @@
 """A Stremio-style source picker for your Plex Watchlist.
 
-The automatic version fetched 17 torrents for one show without ever showing them,
-which is not something that should happen to your Real-Debrid account. So the
-default is now manual: this serves a page listing your watchlist, and for each
+Automatic fetching can add many torrents for one show without ever showing
+them, which is not something that should happen to your Real-Debrid account. So
+the default is manual: this serves a page listing your watchlist, and for each
 title the available releases ranked best-first, with the reasons visible. You
 click the one you want and only that one is added.
 
@@ -431,18 +431,29 @@ def video_hash(folder, episode=None):
         return None
 
 
-def clean_srt(raw):
+# Legacy code page a non-UTF-8 subtitle is most likely in, by its language.
+# Anything not listed is read as Windows-1252 (Western European).
+LEGACY_CODEPAGE = {
+    **dict.fromkeys(("cze", "pol", "hun", "slo", "slv", "hrv", "rum", "bos", "alb"), "cp1250"),
+    **dict.fromkeys(("rus", "ukr", "bul", "bel", "mac"), "cp1251"),
+    "gre": "cp1253", "tur": "cp1254", "heb": "cp1255", "ara": "cp1256", "per": "cp1256",
+    **dict.fromkeys(("lit", "lav", "est"), "cp1257"),
+    "vie": "cp1258", "tha": "cp874", "chi": "gb18030", "jpn": "cp932", "kor": "cp949",
+}
+
+
+def clean_srt(raw, lang=""):
     """Return the subtitle as UTF-8 bytes, whatever it arrived as.
 
-    OpenSubtitles files come three ways: proper UTF-8, legacy Windows-1254, and
-    UTF-8 that someone upstream read as Windows-1252 and re-saved, which turns
-    "KURTULUŞ" into "KURTULUÅž". Plex renders the last kind exactly as broken as
-    it looks, so undo it here.
+    OpenSubtitles files come three ways: proper UTF-8, a legacy Windows code
+    page for their language, and UTF-8 that someone upstream read as
+    Windows-1252 and re-saved, which turns "KURTULUŞ" into "KURTULUÅž". Plex
+    renders the last kind exactly as broken as it looks, so undo it here.
     """
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        text = raw.decode("cp1254", "replace")
+        text = raw.decode(LEGACY_CODEPAGE.get(lang, "cp1252"), "replace")
     # Mojibake signature: UTF-8 lead bytes read as Latin letters. A real "Ä" in
     # German text is followed by ASCII, which fails the UTF-8 decode below and
     # leaves the file untouched.
@@ -478,7 +489,7 @@ def save_subtitle(url, imdb, lang, season=None, episode=None, n=None):
     r.raise_for_status()
     SUBS_DIR.mkdir(parents=True, exist_ok=True)
     path = sub_path(imdb, lang, season, episode, n)
-    path.write_bytes(clean_srt(r.content))
+    path.write_bytes(clean_srt(r.content, lang))
     return path
 
 
@@ -567,7 +578,7 @@ def auto_subtitles(kind, imdb, release, folder, season=None, episodes=()):
                 try:
                     r = requests.get(s["url"], timeout=60, headers={"User-Agent": "Mozilla/5.0"})
                     r.raise_for_status()
-                    got.append(clean_srt(r.content))
+                    got.append(clean_srt(r.content, lang))
                 except Exception as e:
                     print(f"[picker] could not fetch a {lang} subtitle for {label}: {e}", flush=True)
             SUBS_DIR.mkdir(parents=True, exist_ok=True)

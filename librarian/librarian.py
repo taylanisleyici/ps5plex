@@ -91,8 +91,8 @@ def link(src, dst):
 def place_subtitles(imdb, dst, season=None, episode=None):
     """Copy any downloaded subtitles next to the video file. Returns their paths.
 
-    Plex reads "Name.tur.srt" sitting beside "Name.mkv" as a selectable Turkish
-    track, and "Name.2.tur.srt" as a second one. A sidecar file is far more
+    Plex reads "Name.eng.srt" sitting beside "Name.mkv" as a selectable English
+    track, and "Name.2.eng.srt" as a second one. A sidecar file is far more
     reliable than whatever a release embedded, and the PS5 client handles it
     better than image-based subtitles.
 

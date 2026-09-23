@@ -1,7 +1,7 @@
 """Serve the Real-Debrid titles we asked for as a plain HTTP directory tree.
 
 This replaces zurg. zurg is a closed-source binary with the API hostname compiled
-in, and this network drops TLS handshakes for exactly that name while the
+in, and some networks drop TLS handshakes for exactly that name while the
 api-1/api-2/api-6 aliases — same servers, same IPs — answer fine. Nothing about
 zurg could be configured around that.
 

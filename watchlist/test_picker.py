@@ -48,8 +48,10 @@ assert clean_srt("GÃ¶z hareketi".encode("utf-8")) == "Göz hareketi".encode("u
 assert clean_srt("Ã\x81lvaro dedi ki: GÃ¶z".encode("utf-8")) == "Álvaro dedi ki: Göz".encode("utf-8")
 # already clean: untouched
 assert clean_srt("İşte başlıyoruz.".encode("utf-8")) == "İşte başlıyoruz.".encode("utf-8")
-# legacy Windows-1254 becomes UTF-8
-assert clean_srt("Çalış".encode("cp1254")) == "Çalış".encode("utf-8")
+# legacy code pages become UTF-8, chosen by the subtitle's language
+assert clean_srt("Çalış".encode("cp1254"), "tur") == "Çalış".encode("utf-8")
+assert clean_srt("Привет".encode("cp1251"), "rus") == "Привет".encode("utf-8")
+assert clean_srt("Straße".encode("cp1252"), "ger") == "Straße".encode("utf-8")
 # a BOM is dropped
 assert clean_srt(b"\xef\xbb\xbfTamam") == b"Tamam"
-print("ok — 17 assertions")
+print("ok — 19 assertions")

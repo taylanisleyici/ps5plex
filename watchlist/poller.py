@@ -33,8 +33,8 @@ RD_TOKEN = os.environ.get("RD_TOKEN", "").strip()
 # /stream/{type}/{imdb}.json shape, so paste whichever you already use.
 SCRAPER = os.environ.get("SCRAPER_URL", "").strip().rstrip("/")
 INTERVAL = int(os.environ.get("WATCHLIST_INTERVAL", "120"))
-# Fetching is manual by default — use the picker at :8081. Automatic fetching
-# once pulled 17 torrents for a single show without showing any of them.
+# Fetching is manual by default — use the picker. Automatic fetching can add
+# many torrents for a single show without showing any of them.
 AUTO_FETCH = os.environ.get("AUTO_FETCH", "0") == "1"
 # Even in automatic mode, never pull a back catalogue off one watchlist entry.
 MAX_PER_TITLE = int(os.environ.get("MAX_PER_TITLE", "3"))

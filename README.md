@@ -211,3 +211,7 @@ Dolby Vision likely plays as HDR10.
 
 Tests (need `pip install guessit`): `python3 librarian/test_classify.py`,
 `python3 librarian/test_rank.py`, `python3 watchlist/test_picker.py`.
+
+## Friendly reminder
+
+This is a heavily vibe-coded project. It works on my machine, and it should work on yours. If it doesn't, please open an issue and i will try to help.

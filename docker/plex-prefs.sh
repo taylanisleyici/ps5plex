@@ -32,7 +32,7 @@ wanted = {
     "ButlerTaskAnalyzeLoudness": "0",
 }
 # Inside the container Plex only knows its 172.x bridge address, which no other
-# device on the LAN can reach. Advertise the Mac's real address if we were told it.
+# device on the LAN can reach. Advertise the host's real address if we were told it.
 url = os.environ.get("PLEX_ADVERTISE_URL", "").strip()
 if url:
     wanted["customConnections"] = url

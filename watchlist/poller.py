@@ -2,7 +2,7 @@
 
 Add a title to your Watchlist — from the PS5 Plex app, your phone, anywhere —
 and this puts a good release into Real-Debrid. rdserve exposes it, the librarian
-files it, Plex shows it. Couch to playable without touching the Mac.
+files it, Plex shows it. Couch to playable without touching the host.
 
 Only what you ask for ends up in Plex. A Real-Debrid account accumulates years of
 already-watched torrents, and mirroring all of it into a library is both useless

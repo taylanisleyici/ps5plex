@@ -1,8 +1,8 @@
 #!/usr/bin/with-contenv bash
 # Mounts rdserve's HTTP tree at /media before Plex starts.
 #
-# The read buffer is large on purpose. The Mac reaches Real-Debrid over Wi-Fi at
-# ~64 Mbps with dips, and the PS5's own playback buffer is tiny: any stall in the
+# The read buffer is large on purpose. A home link to Real-Debrid (Wi-Fi especially)
+# dips now and then, and the PS5's own playback buffer is tiny: any stall in the
 # feed makes its app abandon the stream and fall back to a transcode, which then
 # stalls the same way. 256 MB in memory per open file rides out those dips, and
 # letting chunks grow without limit turns a file into one long-lived request

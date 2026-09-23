@@ -49,7 +49,7 @@ services:
       # Only needed on the very first run — get one at https://plex.tv/claim
       # (it expires 4 minutes after you generate it).
       PLEX_CLAIM: ${PLEX_CLAIM:-}
-      # This Mac's LAN address, so Plex advertises something the PS5 can reach.
+      # This computer's LAN address, so Plex advertises something the PS5 can reach.
       PLEX_ADVERTISE_URL: ${PLEX_ADVERTISE_URL:-}
       # The librarian needs this to ask Plex to scan — without it Plex answers
       # 401 and newly linked files sit there unnoticed until a scheduled scan.

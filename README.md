@@ -215,3 +215,11 @@ Tests (need `pip install guessit`): `python3 librarian/test_classify.py`,
 ## Friendly reminder
 
 This is a heavily vibe-coded project. It works on my machine, and it should work on yours. If it doesn't, please open an issue and i will try to help.
+
+## License
+
+[GNU AGPL-3.0](LICENSE). You can use, change, share and even sell it, but any
+copy or modified version you distribute or run as a network service must be
+released under the same license, with full source.
+
+Copyright (C) 2026 Taylan İşleyici
